@@ -1,0 +1,16 @@
+config.yaml
+template_settings.yaml
+charts/*.tgz
+.DS_Store
+tags
+.markdownlintrc
+gems
+.bundle
+build
+spec/examples.txt
+Chart.*.yaml
+ci.digests.test.yaml
+scripts/debug/chart-info
+.idea
+.claude/settings.local.json
+.values

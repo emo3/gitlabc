@@ -1,0 +1,240 @@
+---
+- name: Install kubectl, Helm, k3d and verify prerequisites
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    kubectl_version: "v1.29.0"
+    helm_version: "v3.16.3"
+    k3d_version: "5.8.3"
+    install_dir: "/usr/local/bin"
+    install_docker: true
+    create_k3d_cluster: true
+    k3d_cluster_name: "gitlab-dev"
+
+  tasks:
+    - name: Set binary architecture
+      ansible.builtin.set_fact:
+        binary_arch: "{{ arch_map.get(ansible_facts.architecture, ansible_facts.architecture) }}"
+      vars:
+        arch_map:
+          x86_64: amd64
+          aarch64: arm64
+          arm64: arm64
+
+    - name: Set Docker user
+      ansible.builtin.set_fact:
+        docker_user: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+
+    - name: Find Docker user's home directory
+      ansible.builtin.command: "getent passwd {{ docker_user }}"
+      register: docker_user_passwd
+      changed_when: false
+
+    - name: Set Docker user's home directory
+      ansible.builtin.set_fact:
+        docker_user_home: "{{ docker_user_passwd.stdout.split(':')[5] }}"
+
+    - name: Ensure curl and ca-certificates are installed (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: true
+      when: ansible_facts.os_family == "Debian"
+
+    - name: Ensure curl and ca-certificates are installed (RHEL/CentOS/Fedora)
+      ansible.builtin.yum:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+      when: ansible_facts.os_family == "RedHat"
+
+    - name: Check whether Docker CLI is installed
+      ansible.builtin.shell: command -v docker
+      register: docker_cli_check
+      changed_when: false
+      failed_when: false
+      args:
+        executable: /bin/bash
+
+    - name: Download Docker install script
+      ansible.builtin.get_url:
+        url: "https://get.docker.com"
+        dest: "/tmp/get-docker.sh"
+        mode: "0755"
+      when:
+        - install_docker | bool
+        - docker_cli_check.rc != 0
+
+    - name: Install Docker Engine
+      ansible.builtin.command: sh /tmp/get-docker.sh
+      when:
+        - install_docker | bool
+        - docker_cli_check.rc != 0
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        enabled: true
+        state: started
+      when: install_docker | bool
+
+    - name: Add local user to docker group
+      ansible.builtin.user:
+        name: "{{ docker_user }}"
+        groups: docker
+        append: true
+      when:
+        - install_docker | bool
+        - docker_user != "root"
+
+    - name: Download kubectl
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/{{ binary_arch }}/kubectl"
+        dest: "{{ install_dir }}/kubectl"
+        mode: "0755"
+
+    - name: Download Helm installer script
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
+        dest: "/tmp/get-helm-3"
+        mode: "0755"
+
+    - name: Install Helm (Helm v3)
+      ansible.builtin.command: "/tmp/get-helm-3"
+      environment:
+        HELM_INSTALL_DIR: "{{ install_dir }}"
+        PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+      args:
+        creates: "{{ install_dir }}/helm"
+
+    - name: (Optional) Pin Helm version by re-installing if needed
+      ansible.builtin.shell: |
+        set -euo pipefail
+        current="$(helm version --short 2>/dev/null || true)"
+        # Example short output: v3.16.3
+        if echo "$current" | grep -q "^{{ helm_version }}$"; then
+          exit 0
+        fi
+        rm -f "{{ install_dir }}/helm"
+        curl -fsSL -o /tmp/get-helm-3 "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
+        chmod +x /tmp/get-helm-3
+        # The script supports --version
+        /tmp/get-helm-3 --version "{{ helm_version }}"
+      environment:
+        PATH: "/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Download k3d
+      ansible.builtin.get_url:
+        url: "https://github.com/k3d-io/k3d/releases/download/v{{ k3d_version }}/k3d-linux-{{ binary_arch }}"
+        dest: "{{ install_dir }}/k3d"
+        mode: "0755"
+
+    - name: Check whether Docker is available
+      ansible.builtin.command: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}'
+      register: docker_version_out
+      changed_when: false
+      failed_when: false
+      become: false
+
+    - name: Show Docker group/session requirement when unavailable
+      ansible.builtin.debug:
+        msg: "Docker is installed, but it is not reachable by the current shell user yet. The playbook will create the k3d cluster through a fresh sudo session for {{ docker_user }}."
+      when: docker_version_out.rc != 0
+
+    - name: Verify kubectl is installed
+      ansible.builtin.command: kubectl version --client --output=yaml
+      environment:
+        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+
+      register: kubectl_version_out
+      changed_when: false
+
+    - name: Verify helm is installed
+      ansible.builtin.command: "{{ install_dir }}/helm version --short"
+      register: helm_version_out
+
+      changed_when: false
+
+    - name: Verify k3d is installed
+      ansible.builtin.command: "{{ install_dir }}/k3d version"
+      register: k3d_version_out
+      changed_when: false
+
+    - name: Check whether k3d cluster exists
+      ansible.builtin.command: "{{ install_dir }}/k3d cluster get {{ k3d_cluster_name }}"
+      register: k3d_cluster_check
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+      when: create_k3d_cluster | bool
+
+    - name: Create k3d cluster
+      ansible.builtin.command:
+        argv:
+          - "{{ install_dir }}/k3d"
+          - cluster
+          - create
+          - "{{ k3d_cluster_name }}"
+          - --agents
+          - "1"
+          - --api-port
+          - "127.0.0.1:6443"
+          - --port
+          - "80:80@loadbalancer"
+          - --port
+          - "443:443@loadbalancer"
+          - --k3s-arg
+          - "--disable=traefik@server:0"
+          - --wait
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+      when:
+        - create_k3d_cluster | bool
+        - k3d_cluster_check.rc != 0
+
+    - name: Use k3d context
+      ansible.builtin.command: "kubectl config use-context k3d-{{ k3d_cluster_name }}"
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+      changed_when: false
+      when: create_k3d_cluster | bool
+
+    - name: Verify k3d Kubernetes API is reachable
+      ansible.builtin.command: kubectl get nodes
+      register: k3d_nodes_out
+      changed_when: false
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+      when: create_k3d_cluster | bool
+
+    - name: Show versions
+      ansible.builtin.debug:
+        msg:
+          - "kubectl: {{ kubectl_version_out.stdout | default('') | trim }}"
+          - "helm: {{ helm_version_out.stdout | default('') | trim }}"
+          - "k3d: {{ k3d_version_out.stdout | default('') | trim }}"
+          - "docker: {{ docker_version_out.stdout | default('not reachable') | trim }}"
+          - "k3d cluster: {{ k3d_cluster_name if (create_k3d_cluster | bool) else 'not managed by this playbook' }}"
