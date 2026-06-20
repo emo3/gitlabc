@@ -1,6 +1,7 @@
 # Local GitLab chart notes
 
-Use this profile for local development with k3d. It runs GitLab over HTTP on localhost.
+Use this profile for local development with k3d. It runs GitLab on localhost through
+the bundled nginx ingress, with HTTP by default and optional HTTPS.
 
 ## GitLab Release Cadence
 
@@ -109,7 +110,7 @@ The setup assumes the k3d cluster created by this playbook:
 - kube context: `k3d-gitlab-dev`
 - cluster name: `gitlab-dev`
 - Docker-backed k3d nodes
-- host port mappings for local HTTP traffic
+- host port mappings for local HTTP and HTTPS traffic
 - nginx ingress reachable through the k3d load balancer
 - local image/DNS behavior from Docker
 
@@ -150,6 +151,17 @@ Deploy GitLab over HTTP through the bundled nginx ingress. The deploy script ins
 bash scripts/deploy_gitlab.sh
 ```
 
+To deploy over HTTPS locally, enable HTTPS for the chart:
+
+```bash
+GITLAB_HTTPS=true bash scripts/deploy_gitlab.sh
+```
+
+The k3d cluster created by the Ansible playbook already exposes host port 443.
+For the default local `127.0.0.1.nip.io` domain, the chart generates a
+self-signed wildcard certificate, so your browser will show a certificate warning
+unless you trust that certificate locally.
+
 The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/deploy_gitlab.sh`. Override it when you intentionally want another stable release:
 
 ```bash
@@ -164,14 +176,14 @@ GITLAB_CHART_VERSION=10.1.0 bash scripts/deploy_gitlab.sh
 | `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
 | `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
 | `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
-| `bash scripts/check_status.sh` | Waits up to five minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
+| `bash scripts/check_status.sh` | Waits up to ten minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
 | `bash scripts/reset_local.sh` | Removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
 | `bash scripts/reset_cluster.sh` | Runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
 
 Use a longer health-check timeout when needed:
 
 ```bash
-TIMEOUT_SECONDS=600 bash scripts/check_status.sh
+TIMEOUT_SECONDS=660 bash scripts/check_status.sh
 ```
 
 ## Reset and Start Over
@@ -217,7 +229,7 @@ bash scripts/deploy_gitlab.sh
 
 ## Check that it is healthy
 
-Wait up to five minutes and print focused diagnostics if anything is stuck:
+Wait up to ten minutes and print focused diagnostics if anything is stuck:
 
 ```bash
 bash scripts/check_status.sh
@@ -226,7 +238,7 @@ bash scripts/check_status.sh
 You can change the timeout:
 
 ```bash
-TIMEOUT_SECONDS=600 bash scripts/check_status.sh
+TIMEOUT_SECONDS=660 bash scripts/check_status.sh
 ```
 
 ```bash
@@ -269,16 +281,24 @@ kubectl logs -f -n gitlab gitlab-webservice-xxx
 
 ## Current access path
 
-Use nginx ingress on host port 80. Do not use `kubectl port-forward` or `:8080` for browser access.
+Use nginx ingress on host port 80 for HTTP or host port 443 for HTTPS. Do not use
+`kubectl port-forward` or `:8080` for browser access.
 
 ```bash
 curl http://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
-Then open:
+For HTTPS:
+
+```bash
+curl -k https://gitlab.127.0.0.1.nip.io/users/sign_in
+```
+
+Then open one of these, depending on how you deployed:
 
 ```text
 http://gitlab.127.0.0.1.nip.io/users/sign_in
+https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
 ## Login

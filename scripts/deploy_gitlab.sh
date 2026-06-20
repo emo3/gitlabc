@@ -12,6 +12,7 @@ NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab}"
 GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
 GITLAB_EXTERNAL_IP="${GITLAB_EXTERNAL_IP:-127.0.0.1}"
+GITLAB_HTTPS="${GITLAB_HTTPS:-false}"
 CERTMANAGER_EMAIL="${CERTMANAGER_EMAIL:-infuse.1301@gmail.com}"
 VALUES_FILE="${VALUES_FILE:-${PROJECT_ROOT}/.values/dev-external.values.yaml}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
@@ -43,6 +44,21 @@ fi
 echo "Updating Helm repo '${GITLAB_HELM_REPO_NAME}'..."
 helm repo update "${GITLAB_HELM_REPO_NAME}"
 
+case "${GITLAB_HTTPS}" in
+  true)
+    GITLAB_SCHEME="https"
+    TLS_ENABLED="true"
+    ;;
+  false)
+    GITLAB_SCHEME="http"
+    TLS_ENABLED="false"
+    ;;
+  *)
+    echo "ERROR: GITLAB_HTTPS must be 'true' or 'false'."
+    exit 1
+    ;;
+esac
+
 echo "Deploying GitLab release '${RELEASE_NAME}' to namespace '${NAMESPACE}'..."
 helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --kube-context "${KUBE_CONTEXT}" \
@@ -53,10 +69,10 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --set global.hosts.domain="${GITLAB_DOMAIN}" \
   --set global.hosts.externalIP="${GITLAB_EXTERNAL_IP}" \
   --set certmanager-issuer.email="${CERTMANAGER_EMAIL}" \
-  --set global.hosts.https=false \
+  --set global.hosts.https="${GITLAB_HTTPS}" \
   --set global.ingress.enabled=true \
   --set global.ingress.configureCertmanager=false \
-  --set global.ingress.tls.enabled=false \
+  --set global.ingress.tls.enabled="${TLS_ENABLED}" \
   --set nginx-ingress.enabled=true \
   --set global.gatewayApi.enabled=false \
   --set gatewayApiResources.enabled=false \
@@ -64,4 +80,7 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --set prometheus.install=false
 
 echo "GitLab deploy submitted."
-echo "Open: http://gitlab.${GITLAB_DOMAIN}/users/sign_in"
+echo "Open: ${GITLAB_SCHEME}://gitlab.${GITLAB_DOMAIN}/users/sign_in"
+if [[ "${GITLAB_HTTPS}" == "true" ]]; then
+  echo "TLS uses the chart-generated self-signed certificate unless you provide your own TLS secret."
+fi
