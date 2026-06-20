@@ -6,8 +6,9 @@ Use this profile for local development with k3d. It runs GitLab over HTTP on loc
 
 ```bash
 cd $HOME/code
-git clone https://gitlab.com/gitlab-org/charts/gitlab.git gitlabc
-cd gitlabc
+git clone https://gitlab.com/gitlab-org/charts/gitlab.git
+# make it ReadOnly
+chmod -R a-w gitlab
 ```
 
 ## Ansible playbooks overview
@@ -19,15 +20,41 @@ cd gitlabc
 Run this from the `gitlabc` directory:
 
 ```bash
+cd $HOME/code/gitlabc
 ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
 kubectl config use-context k3d-gitlab-dev
 kubectl get nodes
 bash scripts/dev_dependencies.sh setup
+bash scripts/deploy_gitlab.sh
 ```
 
 ### Ansible: install kubectl, Helm, and k3d prerequisites
 
 The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm, and k3d. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
+
+By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
+
+```json
+{
+  "dns": ["1.1.1.1", "8.8.8.8"]
+}
+```
+
+This avoids k3d image pull failures where pods cannot resolve `registry-1.docker.io` from inside the Docker network. Existing Docker daemon settings are preserved, and Docker is restarted only when the daemon config changes. To skip this step:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass \
+  -e docker_configure_dns=false \
+  ansible-install-k8s-tools-gitlab-deps.yml
+```
+
+To use different DNS servers:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass \
+  -e '{"docker_dns_servers":["192.168.86.1","1.1.1.1"]}' \
+  ansible-install-k8s-tools-gitlab-deps.yml
+```
 
 #### Run against localhost (inline inventory)
 
@@ -74,24 +101,42 @@ bash scripts/dev_dependencies.sh setup
 # NAMESPACE=my-gitlab bash scripts/dev_dependencies.sh setup
 ```
 
-### Deploy GitLab using the generated values
+The local wrapper reuses the helper libraries from `../gitlab`, but writes generated values to this repository at `.values/dev-external.values.yaml`. This keeps the upstream chart checkout clean.
+
+### Deploy GitLab from gitlabc
+
+Deploy GitLab over HTTP through the bundled nginx ingress. The deploy script builds an ignored local chart mirror at `.chart/gitlab`, so Helm dependency archives do not modify `../gitlab`.
 
 ```bash
-helm dependency update
-helm upgrade --install gitlab . \
-  --namespace gitlab \
-  --timeout 600s \
-  -f .values/dev-external.values.yaml \
-  --set global.hosts.domain=127.0.0.1.nip.io \
-  --set global.hosts.externalIP=127.0.0.1 \
-  --set certmanager-issuer.email=infuse.1301@gmail.com \
-  --set global.hosts.https=false \
-  --set gatewayApiResources.gateway.protocol=HTTP \
-  --set gatewayApiResources.envoy.clientTrafficPolicySpec.path.escapedSlashesAction=KeepUnchanged \
-  --set global.gatewayApi.configureCertmanager=false \
-  --set global.gatewayApi.httpToHttpsRedirect=false \
-  --set gitlab-runner.install=false \
-  --set prometheus.install=false
+bash scripts/deploy_gitlab.sh
+```
+
+Do not run `helm dependency update ../gitlab` from this profile unless you intend to modify the upstream checkout. Use `scripts/deploy_gitlab.sh`, which updates `.chart/gitlab` instead.
+
+## Reset and Start Over
+
+Reset GitLab and the external dependencies, but keep the k3d cluster:
+
+```bash
+bash scripts/reset_local.sh
+```
+
+Use this when you are debugging GitLab chart values or dependency state. It is faster and preserves the cluster itself. The reset scripts default to Kubernetes context `k3d-gitlab-dev`; override with `KUBE_CONTEXT=...` if needed.
+
+Reset everything, including the k3d cluster:
+
+```bash
+bash scripts/reset_cluster.sh
+```
+
+Use this when you want to validate the whole setup from zero, or when cluster-level resources such as CRDs, admission webhooks, ingress controllers, or Gateway API state may be stale. It is slower because the cluster and images have to be recreated.
+
+After `reset_cluster.sh`, recreate the cluster and deploy:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+bash scripts/dev_dependencies.sh setup
+bash scripts/deploy_gitlab.sh
 ```
 
 ## Check that it is healthy
@@ -138,6 +183,8 @@ kubectl logs -f -n gitlab gitlab-webservice-xxx
 `bash scripts/dev_dependencies.sh status`
 
 ## Current access path
+
+Use nginx ingress on host port 80. Do not use `kubectl port-forward` or `:8080` for browser access.
 
 ```bash
 curl http://gitlab.127.0.0.1.nip.io/users/sign_in
