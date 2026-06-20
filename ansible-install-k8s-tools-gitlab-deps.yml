@@ -126,7 +126,7 @@
 
     - name: Parse existing Docker daemon config
       ansible.builtin.set_fact:
-        docker_daemon_config_parsed: "{{ docker_daemon_config_current.content | b64decode | from_json }}"
+        docker_daemon_config_parsed: "{{ (docker_daemon_config_current.content | b64decode | trim) | ternary(docker_daemon_config_current.content | b64decode | from_json, {}) }}"
       when:
         - docker_configure_dns | bool
         - docker_daemon_config_stat.stat.exists | default(false)
@@ -169,8 +169,8 @@
       ansible.builtin.shell: |
         set -euo pipefail
         current="$(helm version --short 2>/dev/null || true)"
-        # Example short output: v3.16.3
-        if echo "$current" | grep -q "^{{ helm_version }}$"; then
+        # Example short output: v3.16.3 or v3.16.3+g...
+        if echo "$current" | grep -Eq "^{{ helm_version | regex_escape }}([+ ].*)?$"; then
           exit 0
         fi
         rm -f "{{ install_dir }}/helm"
@@ -178,11 +178,13 @@
         chmod +x /tmp/get-helm-3
         # The script supports --version
         /tmp/get-helm-3 --version "{{ helm_version }}"
+        echo "helm reinstalled"
       environment:
         PATH: "/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
       args:
         executable: /bin/bash
-      changed_when: true
+      register: helm_pin_out
+      changed_when: "'helm reinstalled' in helm_pin_out.stdout"
 
     - name: Download k3d
       ansible.builtin.get_url:

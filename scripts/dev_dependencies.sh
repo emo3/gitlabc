@@ -12,6 +12,14 @@ GITLAB_CHART_ROOT="${GITLAB_CHART_ROOT:-${PROJECT_ROOT}/../gitlab}"
 UPSTREAM_SCRIPT_DIR="${GITLAB_CHART_ROOT}/scripts"
 VALUES_DIR="${PROJECT_ROOT}/.values"
 
+for helper in helpers.sh valkey.sh cloudnativepg.sh garage.sh; do
+  if [[ ! -f "${UPSTREAM_SCRIPT_DIR}/ci/lib/${helper}" ]]; then
+    echo "ERROR: Missing upstream helper ${UPSTREAM_SCRIPT_DIR}/ci/lib/${helper}."
+    echo "Clone the GitLab chart checkout next to this repo, or set GITLAB_CHART_ROOT."
+    exit 1
+  fi
+done
+
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/helpers.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/valkey.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/cloudnativepg.sh"
@@ -20,14 +28,9 @@ source "${UPSTREAM_SCRIPT_DIR}/ci/lib/garage.sh"
 NAMESPACE="${NAMESPACE:-gitlab}"
 GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
 CNPG_POSTGRESQL_TAG="${CNPG_POSTGRESQL_TAG:-17}"
-KUBECTL_CONTEXT_ARGS=()
-HELM_CONTEXT_ARGS=()
-
-if [[ -n "${KUBE_CONTEXT:-}" ]]; then
-  KUBECTL_CONTEXT_ARGS=(--context "${KUBE_CONTEXT}")
-  HELM_CONTEXT_ARGS=(--kube-context "${KUBE_CONTEXT}")
-  kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
-fi
+K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
+KUBECTL_CONTEXT_ARGS=(--context "${KUBE_CONTEXT}")
 
 GENERATED_VALUES="${VALUES_DIR}/dev-external.values.yaml"
 
@@ -38,6 +41,16 @@ function check_prerequisites() {
       exit 1
     fi
   done
+}
+
+function use_kube_context() {
+  if ! kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
+    echo "ERROR: Kubernetes context '${KUBE_CONTEXT}' was not found."
+    echo "Run the Ansible playbook first, or set KUBE_CONTEXT to the context you want to use."
+    exit 1
+  fi
+
+  kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
 }
 
 function ensure_namespace() {
@@ -118,6 +131,7 @@ function cmd_setup() {
   echo "Setting up external dependencies in namespace '${NAMESPACE}'..."
   echo ""
   check_prerequisites
+  use_kube_context
   ensure_namespace
 
   echo "==> Setting up Valkey..."
@@ -141,6 +155,9 @@ function cmd_setup() {
 function cmd_teardown() {
   echo "Removing external dependencies from namespace '${NAMESPACE}'..."
   echo ""
+  check_prerequisites
+  use_kube_context
+
   echo "    Removing Valkey..."
   remove_external_valkey
   kubectl delete secret -n "${NAMESPACE}" "$(valkey_auth_secret)" --ignore-not-found
@@ -158,6 +175,9 @@ function cmd_teardown() {
 }
 
 function cmd_status() {
+  check_prerequisites
+  use_kube_context
+
   echo "External dependency status in namespace '${NAMESPACE}':"
   echo ""
 

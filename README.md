@@ -2,13 +2,29 @@
 
 Use this profile for local development with k3d. It runs GitLab over HTTP on localhost.
 
-## Pull the GitLab Helm chart code
+## GitLab Release Cadence
+
+GitLab release cadence is documented in the official [GitLab release and maintenance policy](https://docs.gitlab.com/policy/maintenance/):
+
+- Major releases: yearly, scheduled for May by default.
+- Minor releases: monthly, on the third Thursday of each month.
+- Patch releases: twice monthly, on the Wednesday before and the Wednesday after the monthly minor release.
+
+## Expected Directory Layout
+
+This profile lives in `gitlabc` and expects the upstream GitLab chart checkout next to it:
+
+```text
+$HOME/code/
+  gitlabc/   # local scripts, Ansible playbook, generated values
+  gitlab/    # upstream gitlab-org/charts/gitlab checkout
+```
+
+Clone the upstream chart if it is missing:
 
 ```bash
 cd $HOME/code
 git clone https://gitlab.com/gitlab-org/charts/gitlab.git
-# make it ReadOnly
-chmod -R a-w gitlab
 ```
 
 ## Ansible playbooks overview
@@ -26,6 +42,7 @@ kubectl config use-context k3d-gitlab-dev
 kubectl get nodes
 bash scripts/dev_dependencies.sh setup
 bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
 ```
 
 ### Ansible: install kubectl, Helm, and k3d prerequisites
@@ -85,12 +102,34 @@ kubectl config use-context k3d-gitlab-dev
 kubectl get nodes
 ```
 
-If `kubectl` still points at minikube and fails with `192.168.49.2:8443`, rerun the playbook or switch contexts manually:
+This profile uses k3d only.
+
+The setup assumes the k3d cluster created by this playbook:
+
+- kube context: `k3d-gitlab-dev`
+- cluster name: `gitlab-dev`
+- Docker-backed k3d nodes
+- host port mappings for local HTTP traffic
+- nginx ingress reachable through the k3d load balancer
+- local image/DNS behavior from Docker
 
 ```bash
-kubectl config get-contexts
+kubectl config current-context
+```
+
+Expected output:
+
+```text
+k3d-gitlab-dev
+```
+
+If needed, switch back:
+
+```bash
 kubectl config use-context k3d-gitlab-dev
 ```
+
+If you intentionally deleted the k3d cluster, reset `~/.kube/config` and rerun the Ansible playbook to recreate the k3d context.
 
 ## Run the setup script (it provisions everything locally in your cluster)
 
@@ -101,17 +140,39 @@ bash scripts/dev_dependencies.sh setup
 # NAMESPACE=my-gitlab bash scripts/dev_dependencies.sh setup
 ```
 
-The local wrapper reuses the helper libraries from `../gitlab`, but writes generated values to this repository at `.values/dev-external.values.yaml`. This keeps the upstream chart checkout clean.
+The local wrapper reuses helper libraries from `../gitlab`, but writes generated values to this repository at `.values/dev-external.values.yaml`. This keeps the upstream chart checkout clean. The GitLab deploy itself uses the released `gitlab/gitlab` chart from the official Helm repo.
 
 ### Deploy GitLab from gitlabc
 
-Deploy GitLab over HTTP through the bundled nginx ingress. The deploy script builds an ignored local chart mirror at `.chart/gitlab`, so Helm dependency archives do not modify `../gitlab`.
+Deploy GitLab over HTTP through the bundled nginx ingress. The deploy script installs a pinned stable chart release from the official GitLab Helm repository.
 
 ```bash
 bash scripts/deploy_gitlab.sh
 ```
 
-Do not run `helm dependency update ../gitlab` from this profile unless you intend to modify the upstream checkout. Use `scripts/deploy_gitlab.sh`, which updates `.chart/gitlab` instead.
+The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/deploy_gitlab.sh`. Override it when you intentionally want another stable release:
+
+```bash
+GITLAB_CHART_VERSION=10.1.0 bash scripts/deploy_gitlab.sh
+```
+
+## Local Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `bash scripts/dev_dependencies.sh setup` | Deploys Valkey, CloudNativePG/PostgreSQL, and Garage, then writes `.values/dev-external.values.yaml`. |
+| `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
+| `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
+| `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
+| `bash scripts/check_status.sh` | Waits up to five minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
+| `bash scripts/reset_local.sh` | Removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
+| `bash scripts/reset_cluster.sh` | Runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
+
+Use a longer health-check timeout when needed:
+
+```bash
+TIMEOUT_SECONDS=600 bash scripts/check_status.sh
+```
 
 ## Reset and Start Over
 
@@ -131,6 +192,21 @@ bash scripts/reset_cluster.sh
 
 Use this when you want to validate the whole setup from zero, or when cluster-level resources such as CRDs, admission webhooks, ingress controllers, or Gateway API state may be stale. It is slower because the cluster and images have to be recreated.
 
+By default, `reset_cluster.sh` also runs:
+
+```bash
+docker system prune -a --volumes -f
+docker volume prune -a -f
+docker buildx history rm --all
+docker system df
+```
+
+This removes unused Docker images, volumes, networks, and build cache after the k3d cluster is deleted, then prints Docker disk usage. To skip Docker pruning:
+
+```bash
+PRUNE_DOCKER=false bash scripts/reset_cluster.sh
+```
+
 After `reset_cluster.sh`, recreate the cluster and deploy:
 
 ```bash
@@ -140,6 +216,18 @@ bash scripts/deploy_gitlab.sh
 ```
 
 ## Check that it is healthy
+
+Wait up to five minutes and print focused diagnostics if anything is stuck:
+
+```bash
+bash scripts/check_status.sh
+```
+
+You can change the timeout:
+
+```bash
+TIMEOUT_SECONDS=600 bash scripts/check_status.sh
+```
 
 ```bash
 kubectl get pods -n gitlab --watch
@@ -152,6 +240,7 @@ helm status gitlab -n gitlab
 # All Resources Overview
 kubectl get all -n gitlab
 ```
+
 ### Check Specific Components
 
 ```bash
@@ -178,10 +267,6 @@ kubectl logs -f -n gitlab <pod-name>
 kubectl logs -f -n gitlab gitlab-webservice-xxx
 ```
 
-## dev_dependencies.sh Helper (if you used the script)
-
-`bash scripts/dev_dependencies.sh status`
-
 ## Current access path
 
 Use nginx ingress on host port 80. Do not use `kubectl port-forward` or `:8080` for browser access.
@@ -196,63 +281,32 @@ Then open:
 http://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
-## clean up stuff
+## Login
 
-### See what will be deleted
-
-```bash
-docker ps -a
-docker volume ls
-docker images
-```
-
-### Stop and remove everything
-
-```bash
-docker stop $(docker ps -aq)
-docker rm -f $(docker ps -aq)
-```
-
-### Remove all images
-
-`docker rmi -f $(docker images -aq)`
-
-### Remove all volumes
-
-`docker volume rm $(docker volume ls -q)`
-
-### Remove unused networks
-
-```bash
-docker network prune -f
-# Or do it all at once
-docker system prune -a --volumes -f
-# Then verify
-docker system df
-```
-
-### You should see something close to
+The initial administrator username is:
 
 ```text
-Images          0
-Containers      0
-Local Volumes   0
-Build Cache     0
+root
 ```
 
-### If you're also trying to start clean with GitLab on Kubernetes
+Get the initial root password:
 
 ```bash
-# Docker cleanup is not enough. You should also remove the Helm release and namespace.
-helm uninstall gitlab -n gitlab
-kubectl delete namespace gitlab
-# Then verify
-helm list -A
-kubectl get ns
+kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-### Remove the k3d cluster
+## Cleanup
+
+Prefer the reset scripts instead of broad Docker cleanup commands:
 
 ```bash
-k3d cluster delete gitlab-dev
+bash scripts/reset_local.sh
 ```
+
+For a full cluster reset:
+
+```bash
+bash scripts/reset_cluster.sh
+```
+
+This also prunes unused Docker images/cache/volumes by default. Avoid separate commands such as `docker rm -f $(docker ps -aq)` unless you intentionally want to remove unrelated running containers on the host.
