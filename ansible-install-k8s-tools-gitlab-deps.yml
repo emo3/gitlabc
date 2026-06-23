@@ -6,7 +6,7 @@
 
   vars:
     kubectl_version: "v1.29.0"
-    helm_version: "v3.16.3"
+    helm_version: "v4.2.2"
     helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
     k3d_version: "5.8.3"
     install_dir: "/usr/local/bin"
@@ -152,40 +152,31 @@
         dest: "{{ install_dir }}/kubectl"
         mode: "0755"
 
-    - name: Download Helm installer script
-      ansible.builtin.get_url:
-        url: "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
-        dest: "/tmp/get-helm-3"
+    - name: Create Helm archive extraction directory
+      ansible.builtin.file:
+        path: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
+        state: directory
         mode: "0755"
 
-    - name: Install Helm (Helm v3)
-      ansible.builtin.command: "/tmp/get-helm-3"
-      environment:
-        HELM_INSTALL_DIR: "{{ install_dir }}"
-        PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
-      args:
-        creates: "{{ install_dir }}/helm"
+    - name: Download Helm archive
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        mode: "0644"
 
-    - name: (Optional) Pin Helm version by re-installing if needed
-      ansible.builtin.shell: |
-        set -euo pipefail
-        current="$(helm version --short 2>/dev/null || true)"
-        # Example short output: v3.16.3 or v3.16.3+g...
-        if echo "$current" | grep -Eq "^{{ helm_version | regex_escape }}([+ ].*)?$"; then
-          exit 0
-        fi
-        rm -f "{{ install_dir }}/helm"
-        curl -fsSL -o /tmp/get-helm-3 "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
-        chmod +x /tmp/get-helm-3
-        # The script supports --version
-        /tmp/get-helm-3 --version "{{ helm_version }}"
-        echo "helm reinstalled"
-      environment:
-        PATH: "/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
-      args:
-        executable: /bin/bash
-      register: helm_pin_out
-      changed_when: "'helm reinstalled' in helm_pin_out.stdout"
+    - name: Extract Helm archive
+      ansible.builtin.unarchive:
+        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
+        remote_src: true
+        creates: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+
+    - name: Install pinned Helm
+      ansible.builtin.copy:
+        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+        dest: "{{ install_dir }}/helm"
+        remote_src: true
+        mode: "0755"
 
     - name: Install helm-git plugin for local user
       ansible.builtin.shell: |

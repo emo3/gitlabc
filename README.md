@@ -30,7 +30,7 @@ git clone https://gitlab.com/gitlab-org/charts/gitlab.git
 
 ## Ansible playbooks overview
 
-- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm, the `helm-git` plugin, and k3d; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
+- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm 4, the `helm-git` plugin, and k3d; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
 
 ## Quick start
 
@@ -48,7 +48,7 @@ bash scripts/check_status.sh
 
 ### Ansible: install kubectl, Helm, helm-git, and k3d prerequisites
 
-The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm, the `helm-git` plugin used by the Garage chart, and k3d. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
+The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, the `helm-git` plugin used by the Garage chart, and k3d. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
 
 By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
 
