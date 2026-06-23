@@ -25,6 +25,162 @@ source "${UPSTREAM_SCRIPT_DIR}/ci/lib/valkey.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/cloudnativepg.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/garage.sh"
 
+function garage_gitlab_storage_secrets_exist() {
+  kubectl get secret \
+    "$(garage_release_name)-gitlab-object-storage" \
+    "$(garage_release_name)-gitlab-object-storage-s3cmd" \
+    "$(garage_release_name)-gitlab-registry-storage" \
+    -n "${NAMESPACE}" > /dev/null 2>&1
+}
+
+function deploy_external_garage() {
+  if [[ -z "${NAMESPACE}" ]]; then
+    echo "Error: NAMESPACE environment variable is not set"
+    exit 1
+  fi
+
+  if helm status "$(garage_release_name)" -n "${NAMESPACE}" > /dev/null 2>&1; then
+    if garage_gitlab_storage_secrets_exist; then
+      echo "Garage already installed and configured. Skipping."
+      return
+    fi
+
+    echo "Garage release already exists, but GitLab storage secrets are missing. Reconfiguring."
+  else
+    echo "Installing external Garage"
+
+    if ! helm plugin ls | grep -q helm-git; then
+      helm plugin install https://github.com/aslafy-z/helm-git
+    fi
+
+    GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
+    helm repo add garage "git+https://git.deuxfleurs.fr/Deuxfleurs/garage.git@script/helm?ref=v${GARAGE_APP_VERSION}"
+    helm repo update
+
+    helm upgrade --install "$(garage_release_name)" garage/garage \
+      -n "${NAMESPACE}" \
+      --set garage.replicationFactor=1 \
+      --set deployment.replicaCount=1 \
+      --set persistence.enabled=false \
+      --set environment[0].name=RUST_LOG \
+      --set environment[0].value="garage=warn" \
+      --set resources.requests.memory="256Mi" \
+      --set resources.requests.cpu="100m" \
+      --set resources.limits.memory="512Mi" \
+      --set resources.limits.cpu="500m" \
+      --set image.repository=docker.io/dxflrs/garage \
+      --set initImage.repository=docker.io/busybox \
+      $(garage_openshift_values) \
+      --wait --timeout=300s
+  fi
+
+  GARAGE_POD=$(kubectl get pod -n "${NAMESPACE}" \
+    -l app.kubernetes.io/instance="$(garage_release_name)" \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}')
+
+  echo "Using Garage pod: ${GARAGE_POD}"
+
+  local NODE_ID
+  NODE_ID=$(kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- \
+    /garage status 2>/dev/null | grep -oE '[0-9a-f]{16}' | head -1)
+
+  if [[ -z "${NODE_ID}" ]]; then
+    echo "ERROR: Could not detect Garage node ID. Full status output:"
+    kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- /garage status
+    exit 1
+  fi
+  echo "Detected Garage node ID: ${NODE_ID}"
+
+  kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- /garage layout assign -z ci -c 1G "${NODE_ID}" || true
+  kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- /garage layout apply --version 1 || true
+
+  local buckets=(
+    "git-lfs"
+    "gitlab-agent-plan-content"
+    "gitlab-artifacts"
+    "gitlab-backups"
+    "gitlab-ci-secure-files"
+    "gitlab-dependency-proxy"
+    "gitlab-mr-diffs"
+    "gitlab-packages"
+    "gitlab-pages"
+    "gitlab-terraform-state"
+    "gitlab-uploads"
+    "registry"
+    "runner-cache"
+    "tmp"
+  )
+
+  for bucket in "${buckets[@]}"; do
+    if kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- /garage bucket create "${bucket}"; then
+      echo "Bucket ${bucket} created"
+    else
+      echo "Bucket ${bucket} might already exist"
+    fi
+  done
+
+  local KEY_OUTPUT KEY_NAME
+  KEY_NAME="gitlab-app-key-$(date +%s)"
+  KEY_OUTPUT=$(kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- \
+    /garage key create "${KEY_NAME}")
+
+  local GARAGE_ACCESS_KEY GARAGE_SECRET_KEY
+  GARAGE_ACCESS_KEY=$(echo "${KEY_OUTPUT}" | grep 'Key ID:' | awk '{print $3}')
+  GARAGE_SECRET_KEY=$(echo "${KEY_OUTPUT}" | grep 'Secret key:' | awk '{print $3}')
+
+  if [[ -z "${GARAGE_ACCESS_KEY}" || -z "${GARAGE_SECRET_KEY}" ]]; then
+    echo "Error: Failed to extract access key or secret key from garage output"
+    exit 1
+  fi
+
+  for bucket in "${buckets[@]}"; do
+    kubectl exec -n "${NAMESPACE}" "${GARAGE_POD}" -- /garage bucket allow \
+      --read --write --key "${KEY_NAME}" "${bucket}"
+  done
+
+  kubectl create secret generic "$(garage_release_name)-gitlab-object-storage" \
+    --namespace "${NAMESPACE}" \
+    --from-literal=config="$(cat <<EOF
+provider: AWS
+region: garage
+aws_access_key_id: ${GARAGE_ACCESS_KEY}
+aws_secret_access_key: ${GARAGE_SECRET_KEY}
+endpoint: "http://$(garage_release_name).${NAMESPACE}.svc.cluster.local:3900"
+path_style: true
+EOF
+)" --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl create secret generic "$(garage_release_name)-gitlab-object-storage-s3cmd" \
+    --namespace "${NAMESPACE}" \
+    --from-literal=config="$(cat <<EOF
+[default]
+access_key = ${GARAGE_ACCESS_KEY}
+secret_key = ${GARAGE_SECRET_KEY}
+host_base = $(garage_release_name).${NAMESPACE}.svc.cluster.local:3900
+host_bucket = $(garage_release_name).${NAMESPACE}.svc.cluster.local:3900
+use_https = False
+EOF
+)" --dry-run=client -o yaml | kubectl apply -f -
+
+  kubectl create secret generic "$(garage_release_name)-gitlab-registry-storage" \
+    --namespace "${NAMESPACE}" \
+    --from-literal=config="$(cat <<EOF
+s3:
+  accesskey: ${GARAGE_ACCESS_KEY}
+  secretkey: ${GARAGE_SECRET_KEY}
+  bucket: registry
+  region: garage
+  regionendpoint: http://$(garage_release_name).${NAMESPACE}.svc.cluster.local:3900
+  secure: false
+  v4auth: true
+  pathstyle: true
+EOF
+)" --dry-run=client -o yaml | kubectl apply -f -
+
+  echo "Garage installation complete"
+}
+
 NAMESPACE="${NAMESPACE:-gitlab}"
 GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
 CNPG_POSTGRESQL_TAG="${CNPG_POSTGRESQL_TAG:-17}"
