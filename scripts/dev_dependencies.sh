@@ -33,6 +33,30 @@ function garage_gitlab_storage_secrets_exist() {
     -n "${NAMESPACE}" > /dev/null 2>&1
 }
 
+function ensure_helm_repo() {
+  local repo_name="$1"
+  local repo_url="$2"
+
+  if helm repo list -o yaml | grep -qE "^[[:space:]]*- name: ${repo_name}$"; then
+    echo "    Updating Helm repo '${repo_name}'..."
+    helm repo update "${repo_name}"
+  else
+    echo "    Adding Helm repo '${repo_name}'..."
+    helm repo add "${repo_name}" "${repo_url}"
+    helm repo update "${repo_name}"
+  fi
+}
+
+function deploy_local_valkey() {
+  ensure_helm_repo valkey https://valkey.io/valkey-helm/
+  deploy_external_valkey
+}
+
+function install_local_cnpg_operator() {
+  ensure_helm_repo cnpg https://cloudnative-pg.github.io/charts
+  install_cnpg_operator
+}
+
 function deploy_external_garage() {
   if [[ -z "${NAMESPACE}" ]]; then
     echo "Error: NAMESPACE environment variable is not set"
@@ -54,8 +78,7 @@ function deploy_external_garage() {
     fi
 
     GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
-    helm repo add garage "git+https://git.deuxfleurs.fr/Deuxfleurs/garage.git@script/helm?ref=v${GARAGE_APP_VERSION}"
-    helm repo update
+    ensure_helm_repo garage "git+https://git.deuxfleurs.fr/Deuxfleurs/garage.git@script/helm?ref=v${GARAGE_APP_VERSION}"
 
     helm upgrade --install "$(garage_release_name)" garage/garage \
       -n "${NAMESPACE}" \
@@ -291,10 +314,10 @@ function cmd_setup() {
   ensure_namespace
 
   echo "==> Setting up Valkey..."
-  deploy_external_valkey
+  deploy_local_valkey
 
   echo "==> Setting up CloudNativePG..."
-  install_cnpg_operator
+  install_local_cnpg_operator
   deploy_external_postgresql
 
   echo "==> Setting up Garage..."
