@@ -14,6 +14,15 @@ PRUNE_DOCKER="${PRUNE_DOCKER:-true}"
 
 cd "${PROJECT_ROOT}"
 
+case "${PRUNE_DOCKER}" in
+  true|false)
+    ;;
+  *)
+    echo "ERROR: PRUNE_DOCKER must be 'true' or 'false'."
+    exit 1
+    ;;
+esac
+
 if kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
   bash scripts/reset_local.sh
 else
@@ -22,10 +31,23 @@ else
   echo "Removed local generated files: .values .chart"
 fi
 
-echo "Deleting k3d cluster '${K3D_CLUSTER_NAME}'..."
-k3d cluster delete "${K3D_CLUSTER_NAME}"
+if ! command -v k3d > /dev/null 2>&1; then
+  echo "ERROR: k3d is required to delete cluster '${K3D_CLUSTER_NAME}'."
+  exit 1
+fi
+
+if k3d cluster get "${K3D_CLUSTER_NAME}" > /dev/null 2>&1; then
+  echo "Deleting k3d cluster '${K3D_CLUSTER_NAME}'..."
+  k3d cluster delete "${K3D_CLUSTER_NAME}"
+else
+  echo "k3d cluster '${K3D_CLUSTER_NAME}' was not found. Skipping cluster delete."
+fi
 
 if [[ "${PRUNE_DOCKER}" == "true" ]]; then
+  if ! command -v docker > /dev/null 2>&1; then
+    echo "ERROR: docker is required when PRUNE_DOCKER=true."
+    exit 1
+  fi
   echo "Pruning unused Docker containers, images, networks, volumes, and build cache..."
   docker system prune -a --volumes -f
   docker volume prune -a -f

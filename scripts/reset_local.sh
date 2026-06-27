@@ -16,6 +16,15 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 
 cd "${PROJECT_ROOT}"
 
+case "${DELETE_LOCAL_CACHE}" in
+  true|false)
+    ;;
+  *)
+    echo "ERROR: DELETE_LOCAL_CACHE must be 'true' or 'false'."
+    exit 1
+    ;;
+esac
+
 echo "Resetting GitLab release and external dependencies in namespace '${NAMESPACE}'..."
 
 if ! kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
@@ -27,8 +36,12 @@ fi
 kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
 
 helm uninstall "${RELEASE_NAME}" -n "${NAMESPACE}" --kube-context "${KUBE_CONTEXT}" --ignore-not-found
-KUBE_CONTEXT="${KUBE_CONTEXT}" bash scripts/dev_dependencies.sh teardown
-kubectl --context "${KUBE_CONTEXT}" delete namespace "${NAMESPACE}" --ignore-not-found --wait=false
+if kubectl --context "${KUBE_CONTEXT}" get namespace "${NAMESPACE}" > /dev/null 2>&1; then
+  KUBE_CONTEXT="${KUBE_CONTEXT}" bash scripts/dev_dependencies.sh teardown
+  kubectl --context "${KUBE_CONTEXT}" delete namespace "${NAMESPACE}" --ignore-not-found --wait=false
+else
+  echo "Namespace '${NAMESPACE}' was not found. Skipping in-cluster dependency teardown."
+fi
 
 if [[ "${DELETE_LOCAL_CACHE}" == "true" ]]; then
   rm -rf .values .chart

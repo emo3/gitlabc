@@ -14,6 +14,16 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 
 KUBECTL=(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}")
 
+function require_positive_integer() {
+  local name="$1"
+  local value="$2"
+
+  if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: ${name} must be a positive integer."
+    exit 1
+  fi
+}
+
 function context_exists() {
   kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1
 }
@@ -23,8 +33,13 @@ function namespace_exists() {
 }
 
 function pods_ready() {
+  local pods
   local not_ready
-  not_ready="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null | awk '
+
+  pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null)"
+  [[ -n "${pods}" ]] || return 1
+
+  not_ready="$(awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {
@@ -32,20 +47,25 @@ function pods_ready() {
       if ($3 != "Running" || ready[1] != ready[2]) {
         print
       }
-    }')"
+    }' <<< "${pods}")"
 
   [[ -z "${not_ready}" ]]
 }
 
 function jobs_ready() {
+  local jobs
   local not_ready
-  not_ready="$("${KUBECTL[@]}" get jobs --no-headers 2>/dev/null | awk '
+
+  jobs="$("${KUBECTL[@]}" get jobs --no-headers 2>/dev/null)"
+  [[ -n "${jobs}" ]] || return 0
+
+  not_ready="$(awk '
     {
       split($3, complete, "/")
       if ($2 != "Complete" && complete[1] != complete[2]) {
         print
       }
-    }')"
+    }' <<< "${jobs}")"
 
   [[ -z "${not_ready}" ]]
 }
@@ -55,10 +75,16 @@ function ingress_ready() {
 }
 
 function print_wait_reasons() {
+  local pods
   local not_ready_pods
   local not_ready_jobs
 
-  not_ready_pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null | awk '
+  pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null)"
+  if [[ -z "${pods}" ]]; then
+    echo "  no pods found yet"
+  fi
+
+  not_ready_pods="$(awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {
@@ -66,7 +92,7 @@ function print_wait_reasons() {
       if ($3 != "Running" || ready[1] != ready[2]) {
         print "  pod " $0
       }
-    }')"
+    }' <<< "${pods}")"
 
   not_ready_jobs="$("${KUBECTL[@]}" get jobs --no-headers 2>/dev/null | awk '
     {
@@ -185,6 +211,9 @@ if ! context_exists; then
   echo "This profile uses k3d. Run the Ansible playbook to create the context, or set KUBE_CONTEXT."
   exit 1
 fi
+
+require_positive_integer TIMEOUT_SECONDS "${TIMEOUT_SECONDS}"
+require_positive_integer SLEEP_SECONDS "${SLEEP_SECONDS}"
 
 if ! namespace_exists; then
   echo "ERROR: Namespace '${NAMESPACE}' was not found in context '${KUBE_CONTEXT}'."

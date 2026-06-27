@@ -30,7 +30,7 @@ git clone https://gitlab.com/gitlab-org/charts/gitlab.git
 
 ## Ansible playbooks overview
 
-- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm 4, the `helm-git` plugin, and k3d; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
+- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm 4, the `helm-git` plugin, k3d, and mkcert; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
 
 ## Quick start
 
@@ -46,9 +46,22 @@ bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
-### Ansible: install kubectl, Helm, helm-git, and k3d prerequisites
+For trusted local HTTPS with mkcert, create the TLS secret before deploying
+GitLab:
 
-The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, the `helm-git` plugin used by the Garage chart, and k3d. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
+```bash
+cd $HOME/code/gitlabc
+ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+kubectl config use-context k3d-gitlab-dev
+bash scripts/dev_dependencies.sh setup
+bash scripts/create_mkcert.sh
+GITLAB_HTTPS=true GITLAB_TLS_SECRET=gitlab-local-tls bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
+```
+
+### Ansible: install kubectl, Helm, helm-git, k3d, and mkcert prerequisites
+
+The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, the `helm-git` plugin used by the Garage chart, k3d, and mkcert. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
 
 By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
 
@@ -162,11 +175,86 @@ For the default local `127.0.0.1.nip.io` domain, the chart generates a
 self-signed wildcard certificate, so your browser will show a certificate warning
 unless you trust that certificate locally.
 
+### HTTPS options
+
+For local development, use mkcert when you want browser-trusted HTTPS without a
+public domain:
+
+```bash
+bash scripts/create_mkcert.sh
+GITLAB_HTTPS=true GITLAB_TLS_SECRET=gitlab-local-tls bash scripts/deploy_gitlab.sh
+```
+
+The helper installs the mkcert local CA if needed, writes the generated
+certificate files under `.certs/`, and creates a Kubernetes TLS secret named
+`gitlab-local-tls` in the GitLab namespace. The generated certificate includes
+the default GitLab host, the wildcard domain, the base domain, `localhost`, and
+`127.0.0.1`. The helper is idempotent: when both certificate files already
+exist, it reuses them and reapplies the Kubernetes TLS secret.
+
+If you use a different domain or namespace, pass the same environment values to
+both commands:
+
+```bash
+GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab bash scripts/create_mkcert.sh
+GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab \
+  GITLAB_HTTPS=true GITLAB_TLS_SECRET=gitlab-local-tls \
+  bash scripts/deploy_gitlab.sh
+```
+
+The hostname you open in your browser must be covered by the mkcert certificate
+SANs. If you change `GITLAB_DOMAIN`, regenerate and reapply the TLS secret.
+
+```bash
+FORCE_REGENERATE_CERT=true bash scripts/create_mkcert.sh
+```
+
+Use the chart-generated self-signed certificate when you only need HTTPS
+transport and do not mind browser or Git client trust warnings:
+
+```bash
+GITLAB_HTTPS=true bash scripts/deploy_gitlab.sh
+```
+
+Use Let's Encrypt only when GitLab has a real DNS name. For a local k3d cluster,
+DNS-01 is usually the practical route because HTTP-01 requires public inbound
+access to the ingress controller. This profile does not install cert-manager or
+DNS provider credentials for Let's Encrypt.
+
 The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/deploy_gitlab.sh`. Override it when you intentionally want another stable release:
 
 ```bash
-GITLAB_CHART_VERSION=10.1.0 bash scripts/deploy_gitlab.sh
+GITLAB_CHART_VERSION=10.1.1 bash scripts/deploy_gitlab.sh
 ```
+
+### Update GitLab chart version
+
+Check the latest chart version from the official GitLab Helm repository:
+
+```bash
+bash scripts/update_gitlab_chart_version.sh
+```
+
+Apply a patch update to the pinned `GITLAB_CHART_VERSION` in
+`scripts/deploy_gitlab.sh`, then redeploy:
+
+```bash
+bash scripts/update_gitlab_chart_version.sh --apply
+GITLAB_HTTPS=true GITLAB_TLS_SECRET=gitlab-local-tls bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
+```
+
+The updater refuses minor or major jumps unless you explicitly allow them:
+
+```bash
+bash scripts/update_gitlab_chart_version.sh --apply --allow-minor
+bash scripts/update_gitlab_chart_version.sh --apply --allow-major
+```
+
+Use minor or major upgrades deliberately. GitLab chart versions map to GitLab
+application versions, but they are not the same version number. For non-patch
+upgrades, review the GitLab chart upgrade notes first and avoid skipping required
+intermediate releases.
 
 ## Local Scripts
 
@@ -175,6 +263,8 @@ GITLAB_CHART_VERSION=10.1.0 bash scripts/deploy_gitlab.sh
 | `bash scripts/dev_dependencies.sh setup` | Deploys Valkey, CloudNativePG/PostgreSQL, and Garage, then writes `.values/dev-external.values.yaml`. |
 | `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
 | `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
+| `bash scripts/create_mkcert.sh` | Generates a local mkcert wildcard certificate and applies it as a Kubernetes TLS secret for trusted local HTTPS. |
+| `bash scripts/update_gitlab_chart_version.sh` | Checks the latest GitLab Helm chart and optionally updates the pinned chart version in `scripts/deploy_gitlab.sh`. |
 | `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
 | `bash scripts/check_status.sh` | Waits up to ten minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
 | `bash scripts/reset_local.sh` | Removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
@@ -292,6 +382,13 @@ For HTTPS:
 
 ```bash
 curl -k https://gitlab.127.0.0.1.nip.io/users/sign_in
+```
+
+If you deployed with `scripts/create_mkcert.sh` and the mkcert root CA
+is trusted on this machine, you can omit `-k`:
+
+```bash
+curl https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
 Then open one of these, depending on how you deployed:

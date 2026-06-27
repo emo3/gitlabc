@@ -9,6 +9,7 @@
     helm_version: "v4.2.2"
     helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
     k3d_version: "5.8.3"
+    mkcert_version: "v1.4.4"
     install_dir: "/usr/local/bin"
     install_docker: true
     docker_configure_dns: true
@@ -53,6 +54,7 @@
         name:
           - curl
           - ca-certificates
+          - libnss3-tools
         state: present
         update_cache: true
       when: ansible_facts.os_family == "Debian"
@@ -62,6 +64,7 @@
         name:
           - curl
           - ca-certificates
+          - nss-tools
         state: present
       when: ansible_facts.os_family == "RedHat"
 
@@ -202,6 +205,12 @@
         dest: "{{ install_dir }}/k3d"
         mode: "0755"
 
+    - name: Download mkcert
+      ansible.builtin.get_url:
+        url: "https://dl.filippo.io/mkcert/{{ mkcert_version }}?for=linux/{{ binary_arch }}"
+        dest: "{{ install_dir }}/mkcert"
+        mode: "0755"
+
     - name: Check whether Docker is available
       ansible.builtin.command: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}'
       register: docker_version_out
@@ -242,6 +251,11 @@
     - name: Verify k3d is installed
       ansible.builtin.command: "{{ install_dir }}/k3d version"
       register: k3d_version_out
+      changed_when: false
+
+    - name: Verify mkcert is installed
+      ansible.builtin.command: "{{ install_dir }}/mkcert --version"
+      register: mkcert_version_out
       changed_when: false
 
     - name: Check whether k3d cluster exists
@@ -313,5 +327,6 @@
           - "helm: {{ helm_version_out.stdout | default('') | trim }}"
           - "helm plugins: {{ helm_plugin_list_out.stdout_lines | default([]) | select('search', 'helm-git') | list | join('; ') }}"
           - "k3d: {{ k3d_version_out.stdout | default('') | trim }}"
+          - "mkcert: {{ mkcert_version_out.stdout | default('') | trim }}"
           - "docker: {{ docker_version_out.stdout | default('not reachable') | trim }}"
           - "k3d cluster: {{ k3d_cluster_name if (create_k3d_cluster | bool) else 'not managed by this playbook' }}"

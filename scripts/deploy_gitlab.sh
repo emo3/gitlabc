@@ -13,12 +13,13 @@ RELEASE_NAME="${RELEASE_NAME:-gitlab}"
 GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
 GITLAB_EXTERNAL_IP="${GITLAB_EXTERNAL_IP:-127.0.0.1}"
 GITLAB_HTTPS="${GITLAB_HTTPS:-false}"
+GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-}"
 CERTMANAGER_EMAIL="${CERTMANAGER_EMAIL:-infuse.1301@gmail.com}"
 VALUES_FILE="${VALUES_FILE:-${PROJECT_ROOT}/.values/dev-external.values.yaml}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 GITLAB_CHART_REF="${GITLAB_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab}"
-GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.1.0}"
+GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.1.1}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 
@@ -59,6 +60,20 @@ case "${GITLAB_HTTPS}" in
     ;;
 esac
 
+TLS_SECRET_ARGS=()
+if [[ -n "${GITLAB_TLS_SECRET}" ]]; then
+  if [[ "${GITLAB_HTTPS}" != "true" ]]; then
+    echo "ERROR: GITLAB_TLS_SECRET requires GITLAB_HTTPS=true."
+    exit 1
+  fi
+  if ! kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${GITLAB_TLS_SECRET}" > /dev/null 2>&1; then
+    echo "ERROR: TLS secret '${GITLAB_TLS_SECRET}' was not found in namespace '${NAMESPACE}'."
+    echo "Run: bash scripts/create_mkcert.sh"
+    exit 1
+  fi
+  TLS_SECRET_ARGS+=(--set "global.ingress.tls.secretName=${GITLAB_TLS_SECRET}")
+fi
+
 echo "Deploying GitLab release '${RELEASE_NAME}' to namespace '${NAMESPACE}'..."
 helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --kube-context "${KUBE_CONTEXT}" \
@@ -73,6 +88,7 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --set global.ingress.enabled=true \
   --set global.ingress.configureCertmanager=false \
   --set global.ingress.tls.enabled="${TLS_ENABLED}" \
+  "${TLS_SECRET_ARGS[@]}" \
   --set nginx-ingress.enabled=true \
   --set global.gatewayApi.enabled=false \
   --set gatewayApiResources.enabled=false \
@@ -82,5 +98,9 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
 echo "GitLab deploy submitted."
 echo "Open: ${GITLAB_SCHEME}://gitlab.${GITLAB_DOMAIN}/users/sign_in"
 if [[ "${GITLAB_HTTPS}" == "true" ]]; then
-  echo "TLS uses the chart-generated self-signed certificate unless you provide your own TLS secret."
+  if [[ -n "${GITLAB_TLS_SECRET}" ]]; then
+    echo "TLS uses Kubernetes secret '${GITLAB_TLS_SECRET}'."
+  else
+    echo "TLS uses the chart-generated self-signed certificate unless you provide your own TLS secret."
+  fi
 fi

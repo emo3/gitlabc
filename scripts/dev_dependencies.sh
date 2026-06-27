@@ -232,9 +232,12 @@ function use_kube_context() {
   kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
 }
 
+function namespace_exists() {
+  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" get namespace "${NAMESPACE}" > /dev/null 2>&1
+}
+
 function ensure_namespace() {
-  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" get namespace "${NAMESPACE}" > /dev/null 2>&1 \
-    || kubectl "${KUBECTL_CONTEXT_ARGS[@]}" create namespace "${NAMESPACE}"
+  namespace_exists || kubectl "${KUBECTL_CONTEXT_ARGS[@]}" create namespace "${NAMESPACE}"
   echo "    Namespace: ${NAMESPACE}"
 }
 
@@ -337,6 +340,12 @@ function cmd_teardown() {
   check_prerequisites
   use_kube_context
 
+  if ! namespace_exists; then
+    echo "Namespace '${NAMESPACE}' was not found. Nothing to remove."
+    rm -f "${GENERATED_VALUES}"
+    return
+  fi
+
   echo "    Removing Valkey..."
   remove_external_valkey
   kubectl delete secret -n "${NAMESPACE}" "$(valkey_auth_secret)" --ignore-not-found
@@ -359,6 +368,11 @@ function cmd_status() {
 
   echo "External dependency status in namespace '${NAMESPACE}':"
   echo ""
+
+  if ! namespace_exists; then
+    echo "Namespace '${NAMESPACE}' was not found."
+    return
+  fi
 
   echo "--- Valkey ($(valkey_release_name)) ---"
   kubectl get deployment \
