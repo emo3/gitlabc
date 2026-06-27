@@ -6,7 +6,8 @@
 
   vars:
     kubectl_version: "v1.29.0"
-    helm_version: "v3.16.3"
+    helm_version: "v4.2.2"
+    helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
     k3d_version: "5.8.3"
     install_dir: "/usr/local/bin"
     install_docker: true
@@ -126,7 +127,7 @@
 
     - name: Parse existing Docker daemon config
       ansible.builtin.set_fact:
-        docker_daemon_config_parsed: "{{ docker_daemon_config_current.content | b64decode | from_json }}"
+        docker_daemon_config_parsed: "{{ (docker_daemon_config_current.content | b64decode | trim) | ternary(docker_daemon_config_current.content | b64decode | from_json, {}) }}"
       when:
         - docker_configure_dns | bool
         - docker_daemon_config_stat.stat.exists | default(false)
@@ -151,38 +152,49 @@
         dest: "{{ install_dir }}/kubectl"
         mode: "0755"
 
-    - name: Download Helm installer script
-      ansible.builtin.get_url:
-        url: "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
-        dest: "/tmp/get-helm-3"
+    - name: Create Helm archive extraction directory
+      ansible.builtin.file:
+        path: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
+        state: directory
         mode: "0755"
 
-    - name: Install Helm (Helm v3)
-      ansible.builtin.command: "/tmp/get-helm-3"
-      environment:
-        HELM_INSTALL_DIR: "{{ install_dir }}"
-        PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
-      args:
-        creates: "{{ install_dir }}/helm"
+    - name: Download Helm archive
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        mode: "0644"
 
-    - name: (Optional) Pin Helm version by re-installing if needed
+    - name: Extract Helm archive
+      ansible.builtin.unarchive:
+        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
+        remote_src: true
+        creates: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+
+    - name: Install pinned Helm
+      ansible.builtin.copy:
+        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+        dest: "{{ install_dir }}/helm"
+        remote_src: true
+        mode: "0755"
+
+    - name: Install helm-git plugin for local user
       ansible.builtin.shell: |
         set -euo pipefail
-        current="$(helm version --short 2>/dev/null || true)"
-        # Example short output: v3.16.3
-        if echo "$current" | grep -q "^{{ helm_version }}$"; then
+        if helm plugin list | awk 'NR > 1 { print $1 }' | grep -qx helm-git; then
           exit 0
         fi
-        rm -f "{{ install_dir }}/helm"
-        curl -fsSL -o /tmp/get-helm-3 "https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3"
-        chmod +x /tmp/get-helm-3
-        # The script supports --version
-        /tmp/get-helm-3 --version "{{ helm_version }}"
+        helm plugin install "{{ helm_git_plugin_url }}"
+        echo "helm-git installed"
+      become: true
+      become_user: "{{ docker_user }}"
       environment:
-        PATH: "/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        HOME: "{{ docker_user_home }}"
+        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
       args:
         executable: /bin/bash
-      changed_when: true
+      register: helm_git_plugin_out
+      changed_when: "'helm-git installed' in helm_git_plugin_out.stdout"
 
     - name: Download k3d
       ansible.builtin.get_url:
@@ -215,6 +227,17 @@
       register: helm_version_out
 
       changed_when: false
+
+    - name: Verify helm-git plugin is installed
+      ansible.builtin.command: "{{ install_dir }}/helm plugin list"
+      register: helm_plugin_list_out
+      changed_when: false
+      failed_when: "'helm-git' not in helm_plugin_list_out.stdout"
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
 
     - name: Verify k3d is installed
       ansible.builtin.command: "{{ install_dir }}/k3d version"
@@ -288,6 +311,7 @@
         msg:
           - "kubectl: {{ kubectl_version_out.stdout | default('') | trim }}"
           - "helm: {{ helm_version_out.stdout | default('') | trim }}"
+          - "helm plugins: {{ helm_plugin_list_out.stdout_lines | default([]) | select('search', 'helm-git') | list | join('; ') }}"
           - "k3d: {{ k3d_version_out.stdout | default('') | trim }}"
           - "docker: {{ docker_version_out.stdout | default('not reachable') | trim }}"
           - "k3d cluster: {{ k3d_cluster_name if (create_k3d_cluster | bool) else 'not managed by this playbook' }}"

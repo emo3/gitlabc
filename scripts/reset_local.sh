@@ -28,7 +28,7 @@ kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
 
 helm uninstall "${RELEASE_NAME}" -n "${NAMESPACE}" --kube-context "${KUBE_CONTEXT}" --ignore-not-found
 KUBE_CONTEXT="${KUBE_CONTEXT}" bash scripts/dev_dependencies.sh teardown
-kubectl --context "${KUBE_CONTEXT}" delete namespace "${NAMESPACE}" --ignore-not-found
+kubectl --context "${KUBE_CONTEXT}" delete namespace "${NAMESPACE}" --ignore-not-found --wait=false
 
 if [[ "${DELETE_LOCAL_CACHE}" == "true" ]]; then
   rm -rf .values .chart
