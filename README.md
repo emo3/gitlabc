@@ -1,7 +1,8 @@
 # Local GitLab chart notes
 
-Use this profile for local development with k3d. It runs GitLab on localhost through
-the bundled nginx ingress, with HTTP by default and optional HTTPS.
+Use this profile for local development with k3d. It runs GitLab through the
+bundled nginx ingress with mkcert-trusted HTTPS by default. Let's Encrypt is
+available as an optional public HTTPS profile.
 
 ## GitLab Release Cadence
 
@@ -42,19 +43,15 @@ ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-inst
 kubectl config use-context k3d-gitlab-dev
 kubectl get nodes
 bash scripts/dev_dependencies.sh setup
+bash scripts/create_mkcert.sh
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
-For public HTTPS with Let's Encrypt:
+Open the local mkcert HTTPS URL:
 
-```bash
-cd $HOME/code/gitlabc
-ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
-kubectl config use-context k3d-gitlab-dev
-bash scripts/dev_dependencies.sh setup
-GITLAB_DEPLOY_PROFILE=public-letsencrypt bash scripts/deploy_gitlab.sh
-bash scripts/check_status.sh
+```text
+https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
 ### Ansible: install kubectl, Helm, helm-git, k3d, and mkcert prerequisites
@@ -105,7 +102,52 @@ Because the playbook uses `hosts: all`, you must provide an inventory where your
 ansible-playbook -i <inventory-file> ansible-install-k8s-tools-gitlab-deps.yml
 ```
 
-### Public Let's Encrypt over HTTP-01
+### Local HTTPS with mkcert
+
+The default deploy profile is `local-mkcert`. It uses a locally trusted mkcert
+certificate stored in Kubernetes secret `gitlab-local-tls`.
+
+Create or refresh the certificate secret:
+
+```bash
+bash scripts/create_mkcert.sh
+```
+
+Deploy GitLab with mkcert HTTPS:
+
+```bash
+bash scripts/dev_dependencies.sh setup
+bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
+```
+
+This is equivalent to:
+
+```bash
+GITLAB_DEPLOY_PROFILE=local-mkcert bash scripts/deploy_gitlab.sh
+```
+
+The helper installs the mkcert local CA if needed, writes certificate files under
+`.certs/`, and applies a Kubernetes TLS secret named `gitlab-local-tls` in the
+GitLab namespace. The generated certificate covers the default GitLab host, the
+wildcard domain, the base domain, `localhost`, and `127.0.0.1`.
+
+If you change the domain or namespace, pass the same values to both commands:
+
+```bash
+GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab bash scripts/create_mkcert.sh
+GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab \
+  GITLAB_DEPLOY_PROFILE=local-mkcert \
+  bash scripts/deploy_gitlab.sh
+```
+
+Regenerate the certificate when the hostnames it covers change:
+
+```bash
+FORCE_REGENERATE_CERT=true bash scripts/create_mkcert.sh
+```
+
+### Optional Public Let's Encrypt
 
 The public Let's Encrypt profile serves GitLab at:
 
@@ -126,7 +168,7 @@ This profile composes the generated dependency values at
 public values file enables HTTPS, GitLab ingress, chart-managed cert-manager,
 the GitLab ACME issuer, and the bundled nginx ingress controller.
 
-Before deploying, make sure all public HTTP-01 prerequisites are true:
+Before deploying, make sure all public prerequisites are true:
 
 - `gitlab.edmo3.dynv6.net` resolves to your current public IP.
 - The router forwards public TCP ports 80 and 443 to this host.
@@ -134,12 +176,15 @@ Before deploying, make sure all public HTTP-01 prerequisites are true:
 - The k3d cluster was created with `80:80@loadbalancer` and
   `443:443@loadbalancer` port mappings.
 
+Public access depends on your network. In prior testing, local access and the
+Let's Encrypt certificate worked, external access through alternate port `8443`
+worked, and plain external `443` still depended on router or ISP behavior.
+
 After deploying, check certificate progress:
 
 ```bash
 kubectl get issuer,certificate,challenge,order -n gitlab
 kubectl get ingress -n gitlab
-curl -I http://gitlab.edmo3.dynv6.net
 curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
 ```
 
@@ -162,7 +207,7 @@ Apply a patch update to the pinned `GITLAB_CHART_VERSION` in
 
 ```bash
 bash scripts/update_gitlab_chart_version.sh --apply
-GITLAB_DEPLOY_PROFILE=public-letsencrypt bash scripts/deploy_gitlab.sh
+bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
@@ -180,9 +225,9 @@ intermediate releases.
 
 ## Networking & Dynamic DNS Validation
 
-For public Let's Encrypt validation with HTTP-01, public internet traffic on
-standard HTTP and HTTPS ports must reach the host machine, then the k3d load
-balancer, then the bundled nginx ingress controller.
+For public Let's Encrypt validation, public internet traffic on TCP ports 80
+and 443 must reach the host machine, then the k3d load balancer, then the
+bundled nginx ingress controller.
 
 ### Dynamic DNS (DDNS) Automation via ddclient
 
@@ -212,8 +257,8 @@ By default, AlmaLinux 9 ships with firewalld, which drops unexpected ingress
 traffic unless you explicitly allow it.
 
 ```bash
-sudo firewall-cmd --permanent --add-service=http
-sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -342,28 +387,25 @@ kubectl logs -f -n gitlab gitlab-webservice-xxx
 
 ## Current access path
 
-Use nginx ingress on host port 80 for HTTP or host port 443 for HTTPS. Do not
-use `kubectl port-forward` or `:8080` for browser access.
+Use nginx ingress on host port 443. Do not use `kubectl port-forward` or
+`:8080` for browser access.
 
-For the public Let's Encrypt profile:
+For the default local mkcert profile:
 
 ```bash
-curl -I http://gitlab.edmo3.dynv6.net
-curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
+curl -I https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
-For the default local HTTP profile:
+For the optional public Let's Encrypt profile:
 
 ```bash
-curl http://gitlab.127.0.0.1.nip.io/users/sign_in
+curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
 ```
 
 Then open the URL for the profile you deployed:
 
-```text
-https://gitlab.edmo3.dynv6.net/users/sign_in
-http://gitlab.127.0.0.1.nip.io/users/sign_in
-```
+- mkcert local HTTPS: `https://gitlab.127.0.0.1.nip.io/users/sign_in`
+- Let's Encrypt public HTTPS: `https://gitlab.edmo3.dynv6.net/users/sign_in`
 
 ## Login
 

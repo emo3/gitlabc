@@ -10,10 +10,9 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab}"
-GITLAB_DEPLOY_PROFILE="${GITLAB_DEPLOY_PROFILE:-local}"
+GITLAB_DEPLOY_PROFILE="${GITLAB_DEPLOY_PROFILE:-local-mkcert}"
 GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
 GITLAB_EXTERNAL_IP="${GITLAB_EXTERNAL_IP:-127.0.0.1}"
-GITLAB_HTTPS="${GITLAB_HTTPS:-false}"
 GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-}"
 CERTMANAGER_EMAIL="${CERTMANAGER_EMAIL:-infuse.1301@gmail.com}"
 DEFAULT_VALUES_FILE="${PROJECT_ROOT}/.values/dev-external.values.yaml"
@@ -52,58 +51,44 @@ if ! kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
 fi
 
 case "${GITLAB_DEPLOY_PROFILE}" in
-  local)
+  local|local-mkcert)
     add_values_file "${VALUES_FILE:-${DEFAULT_VALUES_FILE}}"
+    GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-gitlab-local-tls}"
 
-    case "${GITLAB_HTTPS}" in
-      true)
-        GITLAB_SCHEME="https"
-        TLS_ENABLED="true"
-        ;;
-      false)
-        GITLAB_SCHEME="http"
-        TLS_ENABLED="false"
-        ;;
-      *)
-        echo "ERROR: GITLAB_HTTPS must be 'true' or 'false'."
-        exit 1
-        ;;
-    esac
-
-    if [[ -n "${GITLAB_TLS_SECRET}" ]]; then
-      if [[ "${GITLAB_HTTPS}" != "true" ]]; then
-        echo "ERROR: GITLAB_TLS_SECRET requires GITLAB_HTTPS=true."
-        exit 1
-      fi
-      if ! kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${GITLAB_TLS_SECRET}" > /dev/null 2>&1; then
-        echo "ERROR: TLS secret '${GITLAB_TLS_SECRET}' was not found in namespace '${NAMESPACE}'."
-        echo "Run: bash scripts/create_mkcert.sh"
-        exit 1
-      fi
-      TLS_SECRET_ARGS+=(--set "global.ingress.tls.secretName=${GITLAB_TLS_SECRET}")
+    if ! kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${GITLAB_TLS_SECRET}" > /dev/null 2>&1; then
+      echo "ERROR: TLS secret '${GITLAB_TLS_SECRET}' was not found in namespace '${NAMESPACE}'."
+      echo "Run: bash scripts/create_mkcert.sh"
+      exit 1
     fi
+    TLS_SECRET_ARGS+=(--set "global.ingress.tls.secretName=${GITLAB_TLS_SECRET}")
 
     PROFILE_SET_ARGS=(
       --set "global.hosts.domain=${GITLAB_DOMAIN}"
       --set "global.hosts.externalIP=${GITLAB_EXTERNAL_IP}"
       --set "certmanager-issuer.email=${CERTMANAGER_EMAIL}"
-      --set "global.hosts.https=${GITLAB_HTTPS}"
+      --set "global.hosts.https=true"
       --set "global.ingress.enabled=true"
       --set "global.ingress.configureCertmanager=false"
-      --set "global.ingress.tls.enabled=${TLS_ENABLED}"
+      --set "global.ingress.tls.enabled=true"
       "${TLS_SECRET_ARGS[@]}"
       --set "nginx-ingress.enabled=true"
+      --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/ssl-redirect=true"
+      --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/force-ssl-redirect=true"
     )
-    GITLAB_URL="${GITLAB_SCHEME}://gitlab.${GITLAB_DOMAIN}/users/sign_in"
+    GITLAB_URL="https://gitlab.${GITLAB_DOMAIN}/users/sign_in"
     ;;
   public-letsencrypt)
     add_values_file "${VALUES_FILE:-${DEFAULT_VALUES_FILE}}"
     add_values_file "${PUBLIC_LETSENCRYPT_VALUES_FILE}"
+    PROFILE_SET_ARGS=(
+      --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/ssl-redirect=true"
+      --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/force-ssl-redirect=true"
+    )
     GITLAB_URL="https://gitlab.edmo3.dynv6.net/users/sign_in"
     ;;
   *)
     echo "ERROR: Unknown GITLAB_DEPLOY_PROFILE '${GITLAB_DEPLOY_PROFILE}'."
-    echo "Supported profiles: local, public-letsencrypt"
+    echo "Supported profiles: local-mkcert, public-letsencrypt"
     exit 1
     ;;
 esac
@@ -122,6 +107,7 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
   --namespace "${NAMESPACE}" \
   --version "${GITLAB_CHART_VERSION}" \
   --timeout 600s \
+  --force-conflicts \
   "${VALUES_FILES[@]}" \
   "${PROFILE_SET_ARGS[@]}" \
   --set "global.gatewayApi.enabled=false" \
@@ -134,12 +120,8 @@ helm upgrade --install "${RELEASE_NAME}" "${GITLAB_CHART_REF}" \
 
 echo "GitLab deploy submitted."
 echo "Open: ${GITLAB_URL}"
-if [[ "${GITLAB_DEPLOY_PROFILE}" == "local" && "${GITLAB_HTTPS}" == "true" ]]; then
-  if [[ -n "${GITLAB_TLS_SECRET}" ]]; then
-    echo "TLS uses Kubernetes secret '${GITLAB_TLS_SECRET}'."
-  else
-    echo "TLS uses the chart-generated self-signed certificate unless you provide your own TLS secret."
-  fi
+if [[ "${GITLAB_DEPLOY_PROFILE}" == "local" || "${GITLAB_DEPLOY_PROFILE}" == "local-mkcert" ]]; then
+  echo "TLS uses mkcert Kubernetes secret '${GITLAB_TLS_SECRET}'."
 elif [[ "${GITLAB_DEPLOY_PROFILE}" == "public-letsencrypt" ]]; then
   echo "TLS is managed by cert-manager and Let's Encrypt."
 fi

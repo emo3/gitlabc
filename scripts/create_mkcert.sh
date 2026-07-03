@@ -84,4 +84,4 @@ echo "Applying TLS secret '${GITLAB_TLS_SECRET}'..."
 
 echo "Created/updated TLS secret '${GITLAB_TLS_SECRET}' in namespace '${NAMESPACE}'."
 echo "Deploy with:"
-echo "GITLAB_HTTPS=true GITLAB_TLS_SECRET=${GITLAB_TLS_SECRET} bash scripts/deploy_gitlab.sh"
+echo "GITLAB_TLS_SECRET=${GITLAB_TLS_SECRET} bash scripts/deploy_gitlab.sh"
