@@ -40,13 +40,14 @@ Run this from the `gitlabc` directory:
 ```bash
 cd $HOME/code/gitlabc
 ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
-kubectl config use-context k3d-gitlab-dev
-kubectl get nodes
-bash scripts/dev_dependencies.sh setup
-bash scripts/create_mkcert.sh
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
+
+The Ansible playbook bootstraps local tools and the k3d cluster. The deploy
+script then idempotently sets up external dependencies, validates generated
+secrets, creates the local mkcert TLS secret, deploys GitLab, and disables
+public sign-ups.
 
 Open the local mkcert HTTPS URL:
 
@@ -58,6 +59,8 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 
 The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, the `helm-git` plugin used by the Garage chart, k3d, and mkcert. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
 
+The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install and start Docker Desktop before running the playbook; Docker Engine installation and daemon DNS configuration are Linux-only.
+
 By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
 
 ```json
@@ -66,7 +69,7 @@ By default, the playbook also makes Docker's container DNS deterministic by merg
 }
 ```
 
-This avoids k3d image pull failures where pods cannot resolve `registry-1.docker.io` from inside the Docker network. Existing Docker daemon settings are preserved, and Docker is restarted only when the daemon config changes. To skip this step:
+This avoids k3d image pull failures where pods cannot resolve `registry-1.docker.io` from inside the Docker network. Existing Docker daemon settings are preserved, and Docker is restarted only when the daemon config changes. This setting applies to Linux hosts only. To skip this step:
 
 ```bash
 ansible-playbook -i localhost, --connection=local --ask-become-pass \
@@ -107,25 +110,14 @@ ansible-playbook -i <inventory-file> ansible-install-k8s-tools-gitlab-deps.yml
 The default deploy profile is `local-mkcert`. It uses a locally trusted mkcert
 certificate stored in Kubernetes secret `gitlab-local-tls`.
 
-Create or refresh the certificate secret:
-
-```bash
-bash scripts/create_mkcert.sh
-```
-
 Deploy GitLab with mkcert HTTPS:
 
 ```bash
-bash scripts/dev_dependencies.sh setup
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
-This is equivalent to:
-
-```bash
-GITLAB_DEPLOY_PROFILE=local-mkcert bash scripts/deploy_gitlab.sh
-```
+This is equivalent to `GITLAB_DEPLOY_PROFILE=local-mkcert bash scripts/deploy_gitlab.sh`.
 
 The helper installs the mkcert local CA if needed, writes certificate files under
 `.certs/`, and applies a Kubernetes TLS secret named `gitlab-local-tls` in the
@@ -420,6 +412,17 @@ Get the initial root password:
 ```bash
 kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath='{.data.password}' | base64 -d; echo
 ```
+
+Create or update a user password without relying on outbound email:
+
+```bash
+bash scripts/create_user.sh \
+  --username alice \
+  --email alice@example.com \
+  --name "Alice Example"
+```
+
+Add `--password 'TempPassword123!'` to avoid the interactive password prompt.
 
 ## Cleanup
 

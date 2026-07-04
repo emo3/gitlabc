@@ -36,24 +36,49 @@
           aarch64: arm64
           arm64: arm64
 
+    - name: Set binary operating system
+      ansible.builtin.set_fact:
+        binary_os: "{{ os_map.get(ansible_facts.system, ansible_facts.system | lower) }}"
+        is_linux: "{{ ansible_facts.system == 'Linux' }}"
+        is_macos: "{{ ansible_facts.system == 'Darwin' }}"
+        command_path: "{{ install_dir }}:{{ ansible_facts.env.PATH | default('/usr/local/bin:/usr/bin:/bin', true) }}"
+      vars:
+        os_map:
+          Linux: linux
+          Darwin: darwin
+
     - name: Set Docker user
       ansible.builtin.set_fact:
-        docker_user: "{{ ansible_env.SUDO_USER | default(ansible_user_id) }}"
+        docker_user: "{{ ansible_facts.env.SUDO_USER | default(ansible_facts.user_id, true) }}"
 
-    - name: Find Docker user's home directory
+    - name: Find Docker user's home directory (Linux)
       ansible.builtin.command: "getent passwd {{ docker_user }}"
       register: docker_user_passwd
       changed_when: false
+      when: is_linux | bool
 
-    - name: Set Docker user's home directory
+    - name: Find Docker user's home directory (macOS)
+      ansible.builtin.command: "dscl . -read /Users/{{ docker_user }} NFSHomeDirectory"
+      register: docker_user_passwd_macos
+      changed_when: false
+      when: is_macos | bool
+
+    - name: Set Docker user's home directory (Linux)
       ansible.builtin.set_fact:
         docker_user_home: "{{ docker_user_passwd.stdout.split(':')[5] }}"
+      when: is_linux | bool
+
+    - name: Set Docker user's home directory (macOS)
+      ansible.builtin.set_fact:
+        docker_user_home: "{{ docker_user_passwd_macos.stdout | regex_replace('^NFSHomeDirectory:\\s*', '') | trim }}"
+      when: is_macos | bool
 
     - name: Ensure curl and ca-certificates are installed (Debian/Ubuntu)
       ansible.builtin.apt:
         name:
           - curl
           - ca-certificates
+          - git
           - libnss3-tools
         state: present
         update_cache: true
@@ -64,9 +89,26 @@
         name:
           - curl
           - ca-certificates
+          - git
           - nss-tools
         state: present
       when: ansible_facts.os_family == "RedHat"
+
+    - name: Check whether git is installed
+      ansible.builtin.shell: command -v git
+      register: git_check
+      changed_when: false
+      failed_when: false
+      become: false
+      args:
+        executable: /bin/bash
+
+    - name: Require git on macOS
+      ansible.builtin.fail:
+        msg: "git is required to install the helm-git plugin. On macOS, install Xcode Command Line Tools or git, then rerun this playbook."
+      when:
+        - is_macos | bool
+        - git_check.rc != 0
 
     - name: Check whether Docker CLI is installed
       ansible.builtin.shell: command -v docker
@@ -82,12 +124,14 @@
         dest: "/tmp/get-docker.sh"
         mode: "0755"
       when:
+        - is_linux | bool
         - install_docker | bool
         - docker_cli_check.rc != 0
 
     - name: Install Docker Engine
       ansible.builtin.command: sh /tmp/get-docker.sh
       when:
+        - is_linux | bool
         - install_docker | bool
         - docker_cli_check.rc != 0
 
@@ -96,7 +140,9 @@
         name: docker
         enabled: true
         state: started
-      when: install_docker | bool
+      when:
+        - is_linux | bool
+        - install_docker | bool
 
     - name: Add local user to docker group
       ansible.builtin.user:
@@ -104,6 +150,7 @@
         groups: docker
         append: true
       when:
+        - is_linux | bool
         - install_docker | bool
         - docker_user != "root"
 
@@ -111,13 +158,16 @@
       ansible.builtin.stat:
         path: "{{ docker_daemon_config_path }}"
       register: docker_daemon_config_stat
-      when: docker_configure_dns | bool
+      when:
+        - is_linux | bool
+        - docker_configure_dns | bool
 
     - name: Read Docker daemon config
       ansible.builtin.slurp:
         path: "{{ docker_daemon_config_path }}"
       register: docker_daemon_config_current
       when:
+        - is_linux | bool
         - docker_configure_dns | bool
         - docker_daemon_config_stat.stat.exists | default(false)
 
@@ -125,6 +175,7 @@
       ansible.builtin.set_fact:
         docker_daemon_config_parsed: {}
       when:
+        - is_linux | bool
         - docker_configure_dns | bool
         - not (docker_daemon_config_stat.stat.exists | default(false))
 
@@ -132,6 +183,7 @@
       ansible.builtin.set_fact:
         docker_daemon_config_parsed: "{{ (docker_daemon_config_current.content | b64decode | trim) | ternary(docker_daemon_config_current.content | b64decode | from_json, {}) }}"
       when:
+        - is_linux | bool
         - docker_configure_dns | bool
         - docker_daemon_config_stat.stat.exists | default(false)
 
@@ -144,39 +196,44 @@
         content: "{{ docker_daemon_config_parsed | combine({'dns': docker_dns_servers}, recursive=True) | to_nice_json }}\n"
         validate: "dockerd --validate --config-file %s"
       notify: Restart Docker
-      when: docker_configure_dns | bool
+      when:
+        - is_linux | bool
+        - docker_configure_dns | bool
 
     - name: Apply Docker daemon changes before creating k3d cluster
       ansible.builtin.meta: flush_handlers
 
     - name: Download kubectl
       ansible.builtin.get_url:
-        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/{{ binary_arch }}/kubectl"
+        url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/{{ binary_os }}/{{ binary_arch }}/kubectl"
         dest: "{{ install_dir }}/kubectl"
         mode: "0755"
 
     - name: Create Helm archive extraction directory
       ansible.builtin.file:
-        path: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
+        path: "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}"
         state: directory
         mode: "0755"
 
     - name: Download Helm archive
       ansible.builtin.get_url:
-        url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
-        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
+        url: "https://get.helm.sh/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}.tar.gz"
         mode: "0644"
 
     - name: Extract Helm archive
-      ansible.builtin.unarchive:
-        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}.tar.gz"
-        dest: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}"
-        remote_src: true
-        creates: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -xzf
+          - "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}.tar.gz"
+          - -C
+          - "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}"
+        creates: "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}/{{ binary_os }}-{{ binary_arch }}/helm"
 
     - name: Install pinned Helm
       ansible.builtin.copy:
-        src: "/tmp/helm-{{ helm_version }}-linux-{{ binary_arch }}/linux-{{ binary_arch }}/helm"
+        src: "/tmp/helm-{{ helm_version }}-{{ binary_os }}-{{ binary_arch }}/{{ binary_os }}-{{ binary_arch }}/helm"
         dest: "{{ install_dir }}/helm"
         remote_src: true
         mode: "0755"
@@ -184,16 +241,16 @@
     - name: Install helm-git plugin for local user
       ansible.builtin.shell: |
         set -euo pipefail
-        if helm plugin list | awk 'NR > 1 { print $1 }' | grep -qx helm-git; then
+        if "{{ install_dir }}/helm" plugin list | awk 'NR > 1 { print $1 }' | grep -qx helm-git; then
           exit 0
         fi
-        helm plugin install "{{ helm_git_plugin_url }}"
+        "{{ install_dir }}/helm" plugin install --verify=false "{{ helm_git_plugin_url }}"
         echo "helm-git installed"
       become: true
       become_user: "{{ docker_user }}"
       environment:
         HOME: "{{ docker_user_home }}"
-        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        PATH: "{{ command_path }}"
       args:
         executable: /bin/bash
       register: helm_git_plugin_out
@@ -201,13 +258,13 @@
 
     - name: Download k3d
       ansible.builtin.get_url:
-        url: "https://github.com/k3d-io/k3d/releases/download/v{{ k3d_version }}/k3d-linux-{{ binary_arch }}"
+        url: "https://github.com/k3d-io/k3d/releases/download/v{{ k3d_version }}/k3d-{{ binary_os }}-{{ binary_arch }}"
         dest: "{{ install_dir }}/k3d"
         mode: "0755"
 
     - name: Download mkcert
       ansible.builtin.get_url:
-        url: "https://dl.filippo.io/mkcert/{{ mkcert_version }}?for=linux/{{ binary_arch }}"
+        url: "https://dl.filippo.io/mkcert/{{ mkcert_version }}?for={{ binary_os }}/{{ binary_arch }}"
         dest: "{{ install_dir }}/mkcert"
         mode: "0755"
 
@@ -221,12 +278,21 @@
     - name: Show Docker group/session requirement when unavailable
       ansible.builtin.debug:
         msg: "Docker is installed, but it is not reachable by the current shell user yet. The playbook will create the k3d cluster through a fresh sudo session for {{ docker_user }}."
-      when: docker_version_out.rc != 0
+      when:
+        - is_linux | bool
+        - docker_version_out.rc != 0
+
+    - name: Require reachable Docker Desktop on macOS
+      ansible.builtin.fail:
+        msg: "Docker is not reachable. On macOS, install and start Docker Desktop, then rerun this playbook."
+      when:
+        - is_macos | bool
+        - docker_version_out.rc != 0
 
     - name: Verify kubectl is installed
       ansible.builtin.command: kubectl version --client --output=yaml
       environment:
-        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        PATH: "{{ command_path }}"
 
       register: kubectl_version_out
       changed_when: false
@@ -246,7 +312,7 @@
       become_user: "{{ docker_user }}"
       environment:
         HOME: "{{ docker_user_home }}"
-        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        PATH: "{{ command_path }}"
 
     - name: Verify k3d is installed
       ansible.builtin.command: "{{ install_dir }}/k3d version"
@@ -268,6 +334,7 @@
       environment:
         HOME: "{{ docker_user_home }}"
         KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ command_path }}"
       when: create_k3d_cluster | bool
 
     - name: Create k3d cluster
@@ -293,6 +360,7 @@
       environment:
         HOME: "{{ docker_user_home }}"
         KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ command_path }}"
       when:
         - create_k3d_cluster | bool
         - k3d_cluster_check.rc != 0
@@ -310,6 +378,7 @@
       environment:
         HOME: "{{ docker_user_home }}"
         KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ command_path }}"
       register: k3d_cluster_start_out
       changed_when: "'Starting cluster' in (k3d_cluster_start_out.stdout ~ k3d_cluster_start_out.stderr)"
       when:
@@ -323,7 +392,7 @@
       environment:
         HOME: "{{ docker_user_home }}"
         KUBECONFIG: "{{ docker_user_home }}/.kube/config"
-        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        PATH: "{{ command_path }}"
       changed_when: false
       when: create_k3d_cluster | bool
 
@@ -336,7 +405,7 @@
       environment:
         HOME: "{{ docker_user_home }}"
         KUBECONFIG: "{{ docker_user_home }}/.kube/config"
-        PATH: "{{ install_dir }}:{{ ansible_env.PATH | default('/usr/local/bin:/usr/bin:/bin') }}"
+        PATH: "{{ command_path }}"
       when: create_k3d_cluster | bool
 
     - name: Show versions
