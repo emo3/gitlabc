@@ -33,6 +33,48 @@ function garage_gitlab_storage_secrets_exist() {
     -n "${NAMESPACE}" > /dev/null 2>&1
 }
 
+function garage_running_pod() {
+  kubectl get pod -n "${NAMESPACE}" \
+    -l app.kubernetes.io/instance="$(garage_release_name)" \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}'
+}
+
+function garage_registry_access_key() {
+  kubectl get secret "$(garage_release_name)-gitlab-registry-storage" \
+    -n "${NAMESPACE}" \
+    -o jsonpath='{.data.config}' 2>/dev/null \
+    | base64 -d \
+    | awk -F': *' '$1 ~ /^[[:space:]]*accesskey$/ { print $2; exit }'
+}
+
+function garage_gitlab_storage_is_usable() {
+  local garage_pod access_key key_info
+
+  garage_gitlab_storage_secrets_exist || return 1
+
+  garage_pod="$(garage_running_pod)"
+  [[ -n "${garage_pod}" ]] || return 1
+
+  access_key="$(garage_registry_access_key)"
+  [[ -n "${access_key}" ]] || return 1
+
+  key_info="$(kubectl exec -n "${NAMESPACE}" "${garage_pod}" -- \
+    /garage key info "${access_key}" 2>/dev/null)" || return 1
+  grep -q "registry" <<< "${key_info}" || return 1
+
+  kubectl exec -n "${NAMESPACE}" "${garage_pod}" -- \
+    /garage bucket info registry > /dev/null 2>&1
+}
+
+function delete_garage_gitlab_storage_secrets() {
+  kubectl delete secret -n "${NAMESPACE}" \
+    "$(garage_release_name)-gitlab-object-storage" \
+    "$(garage_release_name)-gitlab-object-storage-s3cmd" \
+    "$(garage_release_name)-gitlab-registry-storage" \
+    --ignore-not-found
+}
+
 function ensure_helm_repo() {
   local repo_name="$1"
   local repo_url="$2"
@@ -64,12 +106,17 @@ function deploy_external_garage() {
   fi
 
   if helm status "$(garage_release_name)" -n "${NAMESPACE}" > /dev/null 2>&1; then
-    if garage_gitlab_storage_secrets_exist; then
+    if garage_gitlab_storage_is_usable; then
       echo "Garage already installed and configured. Skipping."
       return
     fi
 
-    echo "Garage release already exists, but GitLab storage secrets are missing. Reconfiguring."
+    if garage_gitlab_storage_secrets_exist; then
+      echo "Garage release already exists, but GitLab storage secrets do not match usable Garage state. Reconfiguring."
+      delete_garage_gitlab_storage_secrets
+    else
+      echo "Garage release already exists, but GitLab storage secrets are missing. Reconfiguring."
+    fi
   else
     echo "Installing external Garage"
 
@@ -97,10 +144,7 @@ function deploy_external_garage() {
       --wait --timeout=300s
   fi
 
-  GARAGE_POD=$(kubectl get pod -n "${NAMESPACE}" \
-    -l app.kubernetes.io/instance="$(garage_release_name)" \
-    --field-selector=status.phase=Running \
-    -o jsonpath='{.items[0].metadata.name}')
+  GARAGE_POD="$(garage_running_pod)"
 
   echo "Using Garage pod: ${GARAGE_POD}"
 
@@ -207,6 +251,7 @@ EOF
 NAMESPACE="${NAMESPACE:-gitlab}"
 GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
 CNPG_POSTGRESQL_TAG="${CNPG_POSTGRESQL_TAG:-17}"
+CNPG_CLUSTER_READY_TIMEOUT="${CNPG_CLUSTER_READY_TIMEOUT:-600s}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 KUBECTL_CONTEXT_ARGS=(--context "${KUBE_CONTEXT}")
@@ -232,9 +277,12 @@ function use_kube_context() {
   kubectl config use-context "${KUBE_CONTEXT}" > /dev/null
 }
 
+function namespace_exists() {
+  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" get namespace "${NAMESPACE}" > /dev/null 2>&1
+}
+
 function ensure_namespace() {
-  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" get namespace "${NAMESPACE}" > /dev/null 2>&1 \
-    || kubectl "${KUBECTL_CONTEXT_ARGS[@]}" create namespace "${NAMESPACE}"
+  namespace_exists || kubectl "${KUBECTL_CONTEXT_ARGS[@]}" create namespace "${NAMESPACE}"
   echo "    Namespace: ${NAMESPACE}"
 }
 
@@ -337,6 +385,12 @@ function cmd_teardown() {
   check_prerequisites
   use_kube_context
 
+  if ! namespace_exists; then
+    echo "Namespace '${NAMESPACE}' was not found. Nothing to remove."
+    rm -f "${GENERATED_VALUES}"
+    return
+  fi
+
   echo "    Removing Valkey..."
   remove_external_valkey
   kubectl delete secret -n "${NAMESPACE}" "$(valkey_auth_secret)" --ignore-not-found
@@ -359,6 +413,11 @@ function cmd_status() {
 
   echo "External dependency status in namespace '${NAMESPACE}':"
   echo ""
+
+  if ! namespace_exists; then
+    echo "Namespace '${NAMESPACE}' was not found."
+    return
+  fi
 
   echo "--- Valkey ($(valkey_release_name)) ---"
   kubectl get deployment \
@@ -411,6 +470,8 @@ Environment variables:
   NAMESPACE           Kubernetes namespace to use (default: gitlab)
   GARAGE_APP_VERSION  Garage version to install (default: 2.2.0)
   CNPG_POSTGRESQL_TAG PostgreSQL image tag for CloudNativePG (default: 17)
+  CNPG_CLUSTER_READY_TIMEOUT
+                      Time to wait for the CNPG cluster to become Ready (default: 600s)
   GITLAB_CHART_ROOT   Path to the upstream GitLab chart checkout (default: ../gitlab)
 EOF
   exit 1
