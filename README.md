@@ -180,6 +180,18 @@ kubectl get ingress -n gitlab
 curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
 ```
 
+The public profile also disables the Web IDE single-origin fallback warning by
+setting `vscode_extension_marketplace_single_origin_fallback_enabled=false`.
+By default it keeps GitLab's upstream extension host domain,
+`cdn.web-ide.gitlab-static.net`. To use a custom host, provide a wildcard DNS
+and TLS setup first, then deploy with:
+
+```bash
+PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN=webide.edmo3.dynv6.net \
+  GITLAB_DEPLOY_PROFILE=public-letsencrypt \
+  bash scripts/deploy_gitlab.sh
+```
+
 The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/deploy_gitlab.sh`. Override it when you intentionally want another stable release:
 
 ```bash
@@ -413,7 +425,7 @@ Get the initial root password:
 kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-Create or update a user password without relying on outbound email:
+Create a user without relying on outbound email:
 
 ```bash
 bash scripts/create_user.sh \
@@ -422,7 +434,19 @@ bash scripts/create_user.sh \
   --name "Alice Example"
 ```
 
-Add `--password 'TempPassword123!'` to avoid the interactive password prompt.
+The script generates and prints an 8-character password when `--password` is
+not provided. Add `--password 'TempPassword123!'` when you want to set a
+specific password.
+
+Reset an existing user's password:
+
+```bash
+bash scripts/create_user.sh \
+  --username alice \
+  --email alice@example.com \
+  --name "Alice Example" \
+  --reset-password
+```
 
 ## Cleanup
 
