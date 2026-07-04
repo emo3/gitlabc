@@ -49,6 +49,14 @@ function require_command() {
   fi
 }
 
+function base64_decode() {
+  if base64 --decode >/dev/null 2>&1 <<< ""; then
+    base64 --decode
+  else
+    base64 -D
+  fi
+}
+
 function running_toolbox_pod() {
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get pod \
     -l "release=${RELEASE_NAME},app=toolbox" \
@@ -111,7 +119,7 @@ fi
 RAILS_SECRET_FILE="${BACKUP_DIR}/${RELEASE_NAME}-rails-secrets.yaml"
 kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${RAILS_SECRET_NAME}" \
   -o jsonpath="{.data['secrets\.yml']}" \
-  | base64 --decode > "${RAILS_SECRET_FILE}"
+  | base64_decode > "${RAILS_SECRET_FILE}"
 
 echo "Rails secrets copied to: ${RAILS_SECRET_FILE}"
 echo "Creating GitLab backup in s3://${BACKUP_BUCKET}/ ..."

@@ -25,6 +25,14 @@ source "${UPSTREAM_SCRIPT_DIR}/ci/lib/valkey.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/cloudnativepg.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/garage.sh"
 
+function base64_decode() {
+  if base64 --decode >/dev/null 2>&1 <<< ""; then
+    base64 --decode
+  else
+    base64 -D
+  fi
+}
+
 function valkey_password() {
   local password
 
@@ -115,7 +123,7 @@ function garage_registry_access_key() {
   kubectl get secret "$(garage_release_name)-gitlab-registry-storage" \
     -n "${NAMESPACE}" \
     -o jsonpath='{.data.config}' 2>/dev/null \
-    | base64 -d \
+    | base64_decode \
     | awk -F': *' '$1 ~ /^[[:space:]]*accesskey$/ { print $2; exit }'
 }
 

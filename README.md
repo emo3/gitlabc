@@ -309,6 +309,90 @@ The copied archive and Rails secrets are outside the k3d cluster and outside
 Garage. Keep at least one known-good backup directory outside this repository
 before any major maintenance.
 
+### Restore GitLab
+
+Restore to the same GitLab chart/application version that created the backup
+when possible. The restore process overwrites the freshly deployed GitLab
+database and repository data, so only run it against a new or disposable local
+instance.
+
+After `reset_local.sh`, redeploy GitLab:
+
+```bash
+bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
+```
+
+After `reset_cluster.sh`, recreate the k3d cluster first, then redeploy:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+bash scripts/deploy_gitlab.sh
+bash scripts/check_status.sh
+```
+
+Point `BACKUP_DIR` at the directory created by `backup_gitlab.sh`:
+
+```bash
+BACKUP_DIR="$HOME/gitlab-backups"
+BACKUP_TAR="$(ls -t "${BACKUP_DIR}"/*_gitlab_backup.tar | head -1)"
+BACKUP_FILE="$(basename "${BACKUP_TAR}")"
+RAILS_SECRETS="${BACKUP_DIR}/gitlab-rails-secrets.yaml"
+```
+
+Restore the Rails secrets before restoring the backup archive:
+
+```bash
+RAILS_SECRET="$(
+  kubectl --context k3d-gitlab-dev -n gitlab get secret -o name \
+    | sed -n 's|secret/\(.*rails-secret\)$|\1|p' \
+    | head -1
+)"
+
+kubectl --context k3d-gitlab-dev -n gitlab delete secret "${RAILS_SECRET}"
+kubectl --context k3d-gitlab-dev -n gitlab create secret generic "${RAILS_SECRET}" \
+  --from-file=secrets.yml="${RAILS_SECRETS}"
+
+kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=sidekiq,release=gitlab
+kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=webservice,release=gitlab
+kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=toolbox,release=gitlab
+bash scripts/check_status.sh
+```
+
+Copy the backup archive into the toolbox pod and run the restore:
+
+```bash
+TOOLBOX_POD="$(
+  kubectl --context k3d-gitlab-dev -n gitlab get pod \
+    -l release=gitlab,app=toolbox \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}'
+)"
+
+kubectl --context k3d-gitlab-dev -n gitlab cp -c toolbox \
+  "${BACKUP_TAR}" \
+  "${TOOLBOX_POD}:/tmp/${BACKUP_FILE}"
+
+kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
+  -lapp=sidekiq,release=gitlab \
+  --replicas=0
+kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
+  -lapp=webservice,release=gitlab \
+  --replicas=0
+
+kubectl --context k3d-gitlab-dev -n gitlab exec "${TOOLBOX_POD}" -c toolbox -- \
+  backup-utility --restore -f "file:///tmp/${BACKUP_FILE}"
+
+kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
+  -lapp=sidekiq,release=gitlab \
+  --replicas=1
+kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
+  -lapp=webservice,release=gitlab \
+  --replicas=1
+
+bash scripts/check_status.sh
+```
+
 ## Networking & Dynamic DNS Validation
 
 This section is an example public setup for `gitlab.edmo3.dynv6.net`. The
@@ -536,7 +620,8 @@ root
 Get the initial root password:
 
 ```bash
-kubectl get secret -n gitlab gitlab-gitlab-initial-root-password -o jsonpath='{.data.password}' | base64 -d; echo
+kubectl get secret -n gitlab gitlab-gitlab-initial-root-password \
+  -o go-template='{{index .data "password" | base64decode}}{{"\n"}}'
 ```
 
 Create a user without relying on outbound email:

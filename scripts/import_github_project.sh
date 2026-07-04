@@ -14,7 +14,7 @@ GITLAB_GROUP="${GITLAB_GROUP:-netcool}"
 GITLAB_VISIBILITY="${GITLAB_VISIBILITY:-internal}"
 GITHUB_OWNER="${GITHUB_OWNER:-emo3}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
-TMP_ROOT="${TMP_ROOT:-/private/tmp}"
+TMP_ROOT="${TMP_ROOT:-${TMPDIR:-/tmp}}"
 DESCRIPTION=""
 DEFAULT_BRANCH=""
 KEEP_MIRROR="false"
@@ -45,7 +45,7 @@ Environment:
   GITLAB_VISIBILITY Project visibility (default: internal)
   GITHUB_OWNER      Owner used when SOURCE is only a project name (default: emo3)
   XDG_CONFIG_HOME   glab config directory (default: ../.glab-config from this repo)
-  TMP_ROOT          Temporary mirror root (default: /private/tmp)
+  TMP_ROOT          Temporary mirror root (default: TMPDIR or /tmp)
 
 Examples:
   $0 -r tcr_db2
