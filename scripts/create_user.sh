@@ -22,12 +22,23 @@ ADMIN="false"
 UPDATE_EXISTING="false"
 
 function usage() {
+  local exit_code="${1:-1}"
+
   cat <<EOF
-Usage: $0 --username USERNAME --email EMAIL [--name NAME] [--password PASSWORD] [--admin] [--update-existing|--reset-password]
+Usage: $0 -u USERNAME -e EMAIL [-n NAME] [-p PASSWORD] [-a] [-U]
 
 Creates the user if missing.
-If the user already exists, use --update-existing or --reset-password to update it.
-If --password is omitted, the script generates an 8-character password and prints it.
+If the user already exists, use -U to update it.
+If -p is omitted, the script generates an 8-character password and prints it.
+
+Options:
+  -u USERNAME  GitLab username.
+  -e EMAIL     GitLab email address.
+  -n NAME      Display name. Defaults to USERNAME.
+  -p PASSWORD  Password. Defaults to a generated password.
+  -a           Make the user an admin.
+  -U           Update an existing user or reset their password.
+  -h           Show this help.
 
 Environment:
   NAMESPACE       Kubernetes namespace (default: gitlab)
@@ -36,12 +47,12 @@ Environment:
   POSTGRES_POD    PostgreSQL pod (default: dev-cluster-1)
   POSTGRES_SECRET PostgreSQL app secret (default: dev-cluster-app)
 EOF
-  exit 1
+  exit "${exit_code}"
 }
 
 function generate_password() {
   if ! command -v openssl >/dev/null 2>&1; then
-    echo "ERROR: openssl is required to generate a password. Install openssl or pass --password." >&2
+    echo "ERROR: openssl is required to generate a password. Install openssl or pass -p." >&2
     exit 1
   fi
 
@@ -50,32 +61,32 @@ function generate_password() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --username)
+    -u)
       USERNAME="${2:-}"
       shift 2
       ;;
-    --email)
+    -e)
       EMAIL="${2:-}"
       shift 2
       ;;
-    --name)
+    -n)
       NAME="${2:-}"
       shift 2
       ;;
-    --password)
+    -p)
       PASSWORD="${2:-}"
       shift 2
       ;;
-    --admin)
+    -a)
       ADMIN="true"
       shift
       ;;
-    --update-existing|--reset-password)
+    -U)
       UPDATE_EXISTING="true"
       shift
       ;;
-    -h|--help)
-      usage
+    -h)
+      usage 0
       ;;
     *)
       echo "ERROR: Unknown argument: $1"
@@ -85,7 +96,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${USERNAME}" || -z "${EMAIL}" ]]; then
-  echo "ERROR: --username and --email are required."
+  echo "ERROR: -u USERNAME and -e EMAIL are required."
   usage
 fi
 
@@ -132,7 +143,7 @@ SQL
 if [[ -n "${EXISTING_USER}" && "${UPDATE_EXISTING}" != "true" ]]; then
   IFS='|' read -r existing_id existing_username existing_email <<< "${EXISTING_USER}"
   echo "ERROR: User already exists: id=${existing_id} username=${existing_username} email=${existing_email}"
-  echo "Re-run with --update-existing or --reset-password to update password/admin/name/email."
+  echo "Re-run with -U to update password/admin/name/email."
   exit 1
 fi
 

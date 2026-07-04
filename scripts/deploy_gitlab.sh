@@ -22,6 +22,10 @@ VALIDATE_DEPENDENCIES="${VALIDATE_DEPENDENCIES:-true}"
 SETUP_LOCAL_TLS="${SETUP_LOCAL_TLS:-true}"
 RESTART_GITLAB_WORKLOADS="${RESTART_GITLAB_WORKLOADS:-true}"
 DISABLE_PUBLIC_SIGNUPS="${DISABLE_PUBLIC_SIGNUPS:-true}"
+CONFIGURE_GLAB_OAUTH="${CONFIGURE_GLAB_OAUTH:-true}"
+GLAB_OAUTH_APP_NAME="${GLAB_OAUTH_APP_NAME:-glab-cli}"
+GLAB_OAUTH_REDIRECT_URI="${GLAB_OAUTH_REDIRECT_URI:-http://localhost:7171/auth/redirect}"
+GLAB_OAUTH_SCOPES="${GLAB_OAUTH_SCOPES:-openid profile read_user write_repository api}"
 PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN="${PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN:-cdn.web-ide.gitlab-static.net}"
 PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED="${PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED:-false}"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
@@ -129,6 +133,65 @@ puts "vscode_extension_marketplace_single_origin_fallback_enabled=#{settings.vsc
 '
 }
 
+function configure_glab_oauth() {
+  local toolbox_pod
+  local gitlab_host
+  local client_id
+
+  validate_boolean CONFIGURE_GLAB_OAUTH "${CONFIGURE_GLAB_OAUTH}"
+  if [[ "${CONFIGURE_GLAB_OAUTH}" != "true" ]]; then
+    return 0
+  fi
+
+  if ! command -v glab >/dev/null 2>&1; then
+    echo "WARNING: glab is not installed; could not configure browser OAuth client_id."
+    echo "         Run the Ansible playbook first, or set CONFIGURE_GLAB_OAUTH=false."
+    return 0
+  fi
+
+  toolbox_pod="$(running_toolbox_pod)"
+  if [[ -z "${toolbox_pod}" ]]; then
+    echo "WARNING: Toolbox pod is not running yet; could not configure glab browser OAuth."
+    echo "         Run this after GitLab is healthy: CONFIGURE_GLAB_OAUTH=true bash scripts/deploy_gitlab.sh"
+    return 0
+  fi
+
+  gitlab_host="gitlab.${GITLAB_DOMAIN}"
+
+  echo "Configuring glab browser OAuth application..."
+  client_id="$(
+    kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${toolbox_pod}" -c toolbox -- \
+      env \
+        GLAB_OAUTH_APP_NAME="${GLAB_OAUTH_APP_NAME}" \
+        GLAB_OAUTH_REDIRECT_URI="${GLAB_OAUTH_REDIRECT_URI}" \
+        GLAB_OAUTH_SCOPES="${GLAB_OAUTH_SCOPES}" \
+        gitlab-rails runner '
+name = ENV.fetch("GLAB_OAUTH_APP_NAME")
+redirect_uri = ENV.fetch("GLAB_OAUTH_REDIRECT_URI")
+scopes = ENV.fetch("GLAB_OAUTH_SCOPES")
+
+app = Doorkeeper::Application.find_or_initialize_by(name: name)
+organization = Organizations::Organization.default_organization
+
+app.redirect_uri = redirect_uri
+app.scopes = scopes
+app.organization_id = organization.id if app.respond_to?(:organization_id=)
+app.confidential = false if app.respond_to?(:confidential=)
+app.save!
+
+puts app.uid
+'
+  )"
+
+  if [[ -z "${client_id}" ]]; then
+    echo "WARNING: GitLab did not return a glab OAuth client_id."
+    return 0
+  fi
+
+  glab config set client_id "${client_id}" --host "${gitlab_host}"
+  echo "Configured glab OAuth client_id for ${gitlab_host}."
+}
+
 if ! kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
   echo "ERROR: Kubernetes context '${KUBE_CONTEXT}' was not found."
   echo "Run the Ansible playbook first, or set KUBE_CONTEXT to the context you want to deploy to."
@@ -229,6 +292,7 @@ if [[ "${DISABLE_PUBLIC_SIGNUPS}" == "true" ]]; then
 fi
 
 harden_public_web_ide
+configure_glab_oauth
 
 echo "GitLab deploy submitted."
 echo "Open: ${GITLAB_URL}"

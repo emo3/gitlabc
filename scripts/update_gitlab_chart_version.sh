@@ -20,30 +20,30 @@ ALLOW_MAJOR=false
 
 function usage() {
   cat <<'USAGE'
-Usage: bash scripts/update_gitlab_chart_version.sh [--apply] [--allow-minor] [--allow-major]
+Usage: bash scripts/update_gitlab_chart_version.sh [-a] [-m] [-M]
 
 Checks the latest gitlab/gitlab Helm chart version.
 
 Options:
-  --apply        Update scripts/deploy_gitlab.sh with the latest chart version.
-  --allow-minor  Permit --apply across minor versions, such as 10.1.x -> 10.2.x.
-  --allow-major  Permit --apply across major versions, such as 10.x -> 11.x.
-  --help         Show this help.
+  -a  Update scripts/deploy_gitlab.sh with the latest chart version.
+  -m  Permit -a across minor versions, such as 10.1.x -> 10.2.x.
+  -M  Permit -a across major versions, such as 10.x -> 11.x.
+  -h  Show this help.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --apply)
+    -a)
       APPLY=true
       ;;
-    --allow-minor)
+    -m)
       ALLOW_MINOR=true
       ;;
-    --allow-major)
+    -M)
       ALLOW_MAJOR=true
       ;;
-    --help|-h)
+    -h)
       usage
       exit 0
       ;;
@@ -99,13 +99,13 @@ fi
 if [[ "${CURRENT_MAJOR}" != "${LATEST_MAJOR}" ]]; then
   echo "Upgrade type: major"
   if [[ "${APPLY}" == "true" && "${ALLOW_MAJOR}" != "true" ]]; then
-    echo "ERROR: Refusing to apply a major upgrade without --allow-major."
+    echo "ERROR: Refusing to apply a major upgrade without -M."
     exit 2
   fi
 elif [[ "${CURRENT_MINOR}" != "${LATEST_MINOR}" ]]; then
   echo "Upgrade type: minor"
   if [[ "${APPLY}" == "true" && "${ALLOW_MINOR}" != "true" && "${ALLOW_MAJOR}" != "true" ]]; then
-    echo "ERROR: Refusing to apply a minor upgrade without --allow-minor."
+    echo "ERROR: Refusing to apply a minor upgrade without -m."
     exit 2
   fi
 else
@@ -113,7 +113,7 @@ else
 fi
 
 if [[ "${APPLY}" != "true" ]]; then
-  echo "Run with --apply to update ${DEPLOY_SCRIPT}."
+  echo "Run with -a to update ${DEPLOY_SCRIPT}."
   exit 0
 fi
 

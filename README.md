@@ -55,9 +55,29 @@ Open the local mkcert HTTPS URL:
 https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
-### Ansible: install kubectl, Helm, helm-git, k3d, and mkcert prerequisites
+### Import GitHub projects
 
-The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, the `helm-git` plugin used by the Garage chart, k3d, and mkcert. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
+After GitLab is deployed and `glab` is authenticated, import a GitHub project
+into the default `netcool` group:
+
+```bash
+bash scripts/import_github_project.sh -r tcr_db2
+```
+
+The script accepts a project name, `owner/project`, or a GitHub URL. It creates
+the GitLab project as `internal`, mirrors branches and tags, and verifies the
+result.
+
+Use environment variables or flags to target another namespace or visibility:
+
+```bash
+bash scripts/import_github_project.sh -r emo3/my_repo -g other-group
+bash scripts/import_github_project.sh -r emo3/my_repo -v private
+```
+
+### Ansible: install kubectl, Helm, glab, helm-git, k3d, and mkcert prerequisites
+
+The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, `glab`, the `helm-git` plugin used by the Garage chart, k3d, and mkcert. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
 
 The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install and start Docker Desktop before running the playbook; Docker Engine installation and daemon DNS configuration are Linux-only.
 
@@ -210,7 +230,7 @@ Apply a patch update to the pinned `GITLAB_CHART_VERSION` in
 `scripts/deploy_gitlab.sh`, then redeploy:
 
 ```bash
-bash scripts/update_gitlab_chart_version.sh --apply
+bash scripts/update_gitlab_chart_version.sh -a
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
@@ -218,8 +238,8 @@ bash scripts/check_status.sh
 The updater refuses minor or major jumps unless you explicitly allow them:
 
 ```bash
-bash scripts/update_gitlab_chart_version.sh --apply --allow-minor
-bash scripts/update_gitlab_chart_version.sh --apply --allow-major
+bash scripts/update_gitlab_chart_version.sh -a -m
+bash scripts/update_gitlab_chart_version.sh -a -M
 ```
 
 Use minor or major upgrades deliberately. GitLab chart versions map to GitLab
@@ -429,23 +449,23 @@ Create a user without relying on outbound email:
 
 ```bash
 bash scripts/create_user.sh \
-  --username alice \
-  --email alice@example.com \
-  --name "Alice Example"
+  -u alice \
+  -e alice@example.com \
+  -n "Alice Example"
 ```
 
-The script generates and prints an 8-character password when `--password` is
-not provided. Add `--password 'TempPassword123!'` when you want to set a
+The script generates and prints an 8-character password when `-p` is
+not provided. Add `-p 'TempPassword123!'` when you want to set a
 specific password.
 
 Reset an existing user's password:
 
 ```bash
 bash scripts/create_user.sh \
-  --username alice \
-  --email alice@example.com \
-  --name "Alice Example" \
-  --reset-password
+  -u alice \
+  -e alice@example.com \
+  -n "Alice Example" \
+  -U
 ```
 
 ## Cleanup
