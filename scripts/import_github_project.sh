@@ -21,6 +21,9 @@ KEEP_MIRROR="false"
 SOURCE_REPO=""
 GITHUB_REPO_NAME=""
 PROJECT_NAME=""
+PROJECT_CHANGED="false"
+REFS_CHANGED="false"
+DEFAULT_BRANCH_CHANGED="false"
 
 function usage() {
   local exit_code="${1:-1}"
@@ -76,7 +79,7 @@ function validate_visibility() {
     internal|private|public)
       ;;
     *)
-      echo "ERROR: --visibility must be internal, private, or public."
+      echo "ERROR: -v must be internal, private, or public."
       exit 1
       ;;
   esac
@@ -141,32 +144,126 @@ function project_exists() {
     glab repo view "${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}" >/dev/null 2>&1
 }
 
+function project_api_path() {
+  local group_path
+
+  group_path="${GITLAB_GROUP//\//%2F}"
+  echo "projects/${group_path}%2F${PROJECT_NAME}"
+}
+
+function group_api_path() {
+  local group_path
+
+  group_path="${GITLAB_GROUP//\//%2F}"
+  echo "groups/${group_path}"
+}
+
+function target_repo_url() {
+  echo "https://${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}.git"
+}
+
 function create_or_update_project() {
   local project_path="${GITLAB_GROUP}/${PROJECT_NAME}"
+  local namespace_id
+  local current_description
+  local current_visibility
 
   if project_exists; then
     echo "Project already exists: https://${GITLAB_HOST}/${project_path}"
   else
     echo "Creating GitLab project: ${project_path}"
+    namespace_id="$(
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+        glab api "$(group_api_path)" \
+        | jq -r '.id // empty'
+    )"
+
+    if [[ -z "${namespace_id}" ]]; then
+      echo "ERROR: Could not resolve GitLab group '${GITLAB_GROUP}'."
+      exit 1
+    fi
+
     XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
-      glab repo create "${GITLAB_HOST}/${project_path}" \
-        "--${GITLAB_VISIBILITY}" \
-        --defaultBranch "${DEFAULT_BRANCH}" \
-        --skipGitInit \
-        --description "${DESCRIPTION}"
+      glab api projects \
+        -X POST \
+        -f "name=${PROJECT_NAME}" \
+        -f "path=${PROJECT_NAME}" \
+        -f "namespace_id=${namespace_id}" \
+        -f "visibility=${GITLAB_VISIBILITY}" \
+        -f "description=${DESCRIPTION}" >/dev/null
+    PROJECT_CHANGED="true"
   fi
 
-  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
-    glab api "projects/${GITLAB_GROUP}%2F${PROJECT_NAME}" \
-      -X PUT \
-      -f "visibility=${GITLAB_VISIBILITY}" \
-      -f "default_branch=${DEFAULT_BRANCH}" >/dev/null
+  current_visibility="$(
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      glab api "$(project_api_path)" \
+      | jq -r '.visibility // empty'
+  )"
+  current_description="$(
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      glab api "$(project_api_path)" \
+      | jq -r '.description // empty'
+  )"
+
+  if [[ "${current_visibility}" != "${GITLAB_VISIBILITY}" || "${current_description}" != "${DESCRIPTION}" ]]; then
+    echo "Updating GitLab project settings..."
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      glab api "$(project_api_path)" \
+        -X PUT \
+        -f "visibility=${GITLAB_VISIBILITY}" \
+        -f "description=${DESCRIPTION}" >/dev/null
+    PROJECT_CHANGED="true"
+  fi
+}
+
+function update_default_branch() {
+  local current_default_branch
+
+  current_default_branch="$(
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      glab api "$(project_api_path)" \
+      | jq -r '.default_branch // empty'
+  )"
+
+  if [[ "${current_default_branch}" != "${DEFAULT_BRANCH}" ]]; then
+    echo "Updating default branch to ${DEFAULT_BRANCH}..."
+    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      glab api "$(project_api_path)" \
+        -X PUT \
+        -f "default_branch=${DEFAULT_BRANCH}" >/dev/null
+    DEFAULT_BRANCH_CHANGED="true"
+  fi
+}
+
+function refs_snapshot() {
+  local repo="$1"
+
+  git ls-remote "${repo}" 'refs/heads/*' 'refs/tags/*' \
+    | awk '$2 !~ /\^\{\}$/ { print $1 "\t" $2 }' \
+    | sort
+}
+
+function refs_are_current() {
+  local target_repo="$1"
+  local source_refs
+  local target_refs
+
+  source_refs="$(refs_snapshot "${SOURCE_REPO}")"
+  target_refs="$(refs_snapshot "${target_repo}" 2>/dev/null || true)"
+
+  [[ -n "${source_refs}" && "${source_refs}" == "${target_refs}" ]]
 }
 
 function import_refs() {
   local tmp_parent
   local mirror_dir
-  local target_repo="https://${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}.git"
+  local target_repo
+
+  target_repo="$(target_repo_url)"
+  if refs_are_current "${target_repo}"; then
+    echo "Repository refs are already current."
+    return 0
+  fi
 
   tmp_parent="$(mktemp -d "${TMP_ROOT}/${PROJECT_NAME}.import.XXXXXX")"
   if [[ -z "${tmp_parent}" || ! -d "${tmp_parent}" ]]; then
@@ -189,6 +286,7 @@ function import_refs() {
   git --git-dir="${mirror_dir}" push "${target_repo}" \
     'refs/heads/*:refs/heads/*' \
     'refs/tags/*:refs/tags/*'
+  REFS_CHANGED="true"
 
   echo "Verifying imported refs"
   git ls-remote "${target_repo}"
@@ -249,6 +347,7 @@ fi
 
 require_command git
 require_command glab
+require_command jq
 validate_visibility
 normalize_source "${SOURCE_REPO}"
 
@@ -265,5 +364,10 @@ echo "Default branch: ${DEFAULT_BRANCH}"
 
 create_or_update_project
 import_refs
+update_default_branch
 
-echo "Imported: https://${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}"
+if [[ "${PROJECT_CHANGED}" == "true" || "${REFS_CHANGED}" == "true" || "${DEFAULT_BRANCH_CHANGED}" == "true" ]]; then
+  echo "Updated: https://${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}"
+else
+  echo "Already up to date: https://${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}"
+fi

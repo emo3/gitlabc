@@ -183,9 +183,29 @@ function install_local_cnpg_operator() {
 }
 
 function deploy_external_garage() {
+  local garage_persistence_args=()
+
   if [[ -z "${NAMESPACE}" ]]; then
     echo "Error: NAMESPACE environment variable is not set"
     exit 1
+  fi
+
+  validate_boolean GARAGE_PERSISTENCE_ENABLED "${GARAGE_PERSISTENCE_ENABLED}"
+  if [[ "${GARAGE_PERSISTENCE_ENABLED}" == "true" ]]; then
+    garage_persistence_args+=(
+      --set persistence.enabled=true
+      --set "persistence.meta.size=${GARAGE_META_PERSISTENCE_SIZE}"
+      --set "persistence.data.size=${GARAGE_DATA_PERSISTENCE_SIZE}"
+    )
+
+    if [[ -n "${GARAGE_STORAGE_CLASS}" ]]; then
+      garage_persistence_args+=(
+        --set "persistence.meta.storageClass=${GARAGE_STORAGE_CLASS}"
+        --set "persistence.data.storageClass=${GARAGE_STORAGE_CLASS}"
+      )
+    fi
+  else
+    garage_persistence_args+=(--set persistence.enabled=false)
   fi
 
   if helm status "$(garage_release_name)" -n "${NAMESPACE}" > /dev/null 2>&1; then
@@ -214,7 +234,7 @@ function deploy_external_garage() {
       -n "${NAMESPACE}" \
       --set garage.replicationFactor=1 \
       --set deployment.replicaCount=1 \
-      --set persistence.enabled=false \
+      "${garage_persistence_args[@]}" \
       --set environment[0].name=RUST_LOG \
       --set environment[0].value="garage=warn" \
       --set resources.requests.memory="256Mi" \
@@ -333,6 +353,10 @@ EOF
 
 NAMESPACE="${NAMESPACE:-gitlab}"
 GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
+GARAGE_PERSISTENCE_ENABLED="${GARAGE_PERSISTENCE_ENABLED:-true}"
+GARAGE_META_PERSISTENCE_SIZE="${GARAGE_META_PERSISTENCE_SIZE:-1Gi}"
+GARAGE_DATA_PERSISTENCE_SIZE="${GARAGE_DATA_PERSISTENCE_SIZE:-10Gi}"
+GARAGE_STORAGE_CLASS="${GARAGE_STORAGE_CLASS:-}"
 CNPG_POSTGRESQL_TAG="${CNPG_POSTGRESQL_TAG:-17}"
 CNPG_CLUSTER_READY_TIMEOUT="${CNPG_CLUSTER_READY_TIMEOUT:-600s}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
@@ -493,6 +517,20 @@ function cmd_teardown() {
   echo "The namespace '${NAMESPACE}' and GitLab chart release are not affected."
 }
 
+function validate_boolean() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    true|false)
+      ;;
+    *)
+      echo "ERROR: ${name} must be 'true' or 'false'."
+      exit 1
+      ;;
+  esac
+}
+
 function cmd_status() {
   check_prerequisites
   use_kube_context
@@ -573,6 +611,14 @@ Usage: $0 {setup|teardown|status|validate}
 Environment variables:
   NAMESPACE           Kubernetes namespace to use (default: gitlab)
   GARAGE_APP_VERSION  Garage version to install (default: 2.2.0)
+  GARAGE_PERSISTENCE_ENABLED
+                      Persist Garage object storage on PVCs (default: true)
+  GARAGE_META_PERSISTENCE_SIZE
+                      Garage metadata PVC size (default: 1Gi)
+  GARAGE_DATA_PERSISTENCE_SIZE
+                      Garage data PVC size (default: 10Gi)
+  GARAGE_STORAGE_CLASS
+                      Storage class for Garage PVCs (default: cluster default)
   CNPG_POSTGRESQL_TAG PostgreSQL image tag for CloudNativePG (default: 17)
   CNPG_CLUSTER_READY_TIMEOUT
                       Time to wait for the CNPG cluster to become Ready (default: 600s)

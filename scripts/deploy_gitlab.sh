@@ -7,6 +7,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
 NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab}"
@@ -34,6 +35,7 @@ GITLAB_CHART_REF="${GITLAB_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab}"
 GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.1.1}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
 
 cd "${PROJECT_ROOT}"
 
@@ -188,7 +190,7 @@ puts app.uid
     return 0
   fi
 
-  glab config set client_id "${client_id}" --host "${gitlab_host}"
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" glab config set client_id "${client_id}" --host "${gitlab_host}"
   echo "Configured glab OAuth client_id for ${gitlab_host}."
 }
 

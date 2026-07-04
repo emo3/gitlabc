@@ -49,16 +49,48 @@ script then idempotently sets up external dependencies, validates generated
 secrets, creates the local mkcert TLS secret, deploys GitLab, and disables
 public sign-ups.
 
+Garage object storage is installed with Kubernetes PVC persistence enabled by
+default. The default Garage PVC sizes are `1Gi` for metadata and `10Gi` for
+data; override them with `GARAGE_META_PERSISTENCE_SIZE` and
+`GARAGE_DATA_PERSISTENCE_SIZE` before dependency setup. For disposable test
+runs only, set `GARAGE_PERSISTENCE_ENABLED=false`. This default applies to new
+Garage installs; an existing Garage release created without persistence must be
+reinstalled or upgraded explicitly before it has persistent object storage.
+
 Open the local mkcert HTTPS URL:
 
 ```text
 https://gitlab.127.0.0.1.nip.io/users/sign_in
 ```
 
+### Common operations
+
+| Task | Command |
+| --- | --- |
+| Check health | `bash scripts/check_status.sh` |
+| Stop without deleting data | `k3d cluster stop gitlab-dev` |
+| Start again | `k3d cluster start gitlab-dev && bash scripts/check_status.sh` |
+| Back up GitLab | `bash scripts/backup_gitlab.sh` |
+| Import a GitHub project | `bash scripts/import_github_project.sh -r emo3/my_repo` |
+| Create a local user | `bash scripts/create_user.sh -u alice -e alice@example.com -n "Alice Example"` |
+| Destructive local reset | `bash scripts/reset_local.sh` |
+
 ### Import GitHub projects
 
-After GitLab is deployed and `glab` is authenticated, import a GitHub project
-into the default `netcool` group:
+After GitLab is deployed, authenticate `glab` against the local GitLab host
+using the repo-local config directory:
+
+```bash
+XDG_CONFIG_HOME=../.glab-config glab auth login \
+  --hostname gitlab.127.0.0.1.nip.io \
+  --api-host gitlab.127.0.0.1.nip.io \
+  --api-protocol https \
+  --git-protocol https \
+  --web \
+  --container-registry-domains ''
+```
+
+Then import a GitHub project into the default `netcool` group:
 
 ```bash
 bash scripts/import_github_project.sh -r tcr_db2
@@ -67,6 +99,13 @@ bash scripts/import_github_project.sh -r tcr_db2
 The script accepts a project name, `owner/project`, or a GitHub URL. It creates
 the GitLab project as `internal`, mirrors branches and tags, and verifies the
 result.
+
+`scripts/deploy_gitlab.sh` creates the GitLab OAuth application used by browser
+`glab auth login` and writes the returned OAuth `client_id` to the repo-local
+glab config at `../.glab-config/glab-cli/config.yml`. The `glab auth login`
+command writes the user auth token to that same config directory. The import
+script uses the same `XDG_CONFIG_HOME` default, so deploy, auth, and import
+read one glab configuration.
 
 Use environment variables or flags to target another namespace or visibility:
 
@@ -170,15 +209,15 @@ https://gitlab.edmo3.dynv6.net/users/sign_in
 Deploy it with:
 
 ```bash
-bash scripts/dev_dependencies.sh setup
 GITLAB_DEPLOY_PROFILE=public-letsencrypt bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
-This profile composes the generated dependency values at
-`.values/dev-external.values.yaml` with `public-letsencrypt.values.yaml`. The
-public values file enables HTTPS, GitLab ingress, chart-managed cert-manager,
-the GitLab ACME issuer, and the bundled nginx ingress controller.
+The deploy script sets up dependencies by default, then composes the generated
+dependency values at `.values/dev-external.values.yaml` with
+`public-letsencrypt.values.yaml`. The public values file enables HTTPS, GitLab
+ingress, chart-managed cert-manager, the GitLab ACME issuer, and the bundled
+nginx ingress controller.
 
 Before deploying, make sure all public prerequisites are true:
 
@@ -245,9 +284,36 @@ bash scripts/update_gitlab_chart_version.sh -a -M
 Use minor or major upgrades deliberately. GitLab chart versions map to GitLab
 application versions, but they are not the same version number. For non-patch
 upgrades, review the GitLab chart upgrade notes first and avoid skipping required
-intermediate releases.
+intermediate releases. Take a GitLab backup before any chart upgrade; persistent
+volumes help across restarts, but they are not a rollback plan for failed
+migrations or accidental deletes.
+
+### Back up GitLab
+
+Run a backup before chart upgrades, destructive resets, or cluster rebuilds:
+
+```bash
+bash scripts/backup_gitlab.sh
+```
+
+The helper saves the Rails secrets, runs `backup-utility` in the GitLab toolbox
+pod, finds the newest archive in the `gitlab-backups` object-storage bucket,
+and copies both restore inputs to `.backups/` on the host. Override the host
+directory with `-d`:
+
+```bash
+bash scripts/backup_gitlab.sh -d "$HOME/gitlab-backups"
+```
+
+The copied archive and Rails secrets are outside the k3d cluster and outside
+Garage. Keep at least one known-good backup directory outside this repository
+before any major maintenance.
 
 ## Networking & Dynamic DNS Validation
+
+This section is an example public setup for `gitlab.edmo3.dynv6.net`. The
+default local mkcert profile does not require DDNS, public port forwarding, or
+firewall changes.
 
 For public Let's Encrypt validation, public internet traffic on TCP ports 80
 and 443 must reach the host machine, then the k3d load balancer, then the
@@ -300,15 +366,16 @@ External port 443 TCP -> internal port 443 on 192.168.86.141
 
 | Script | Purpose |
 | --- | --- |
-| `bash scripts/dev_dependencies.sh setup` | Deploys Valkey, CloudNativePG/PostgreSQL, and Garage, then writes `.values/dev-external.values.yaml`. |
+| `bash scripts/dev_dependencies.sh setup` | Deploys Valkey, CloudNativePG/PostgreSQL, and Garage with PVC persistence enabled, then writes `.values/dev-external.values.yaml`. |
 | `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
 | `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
 | `bash scripts/create_mkcert.sh` | Generates a local mkcert wildcard certificate and applies it as a Kubernetes TLS secret for trusted local HTTPS. |
 | `bash scripts/update_gitlab_chart_version.sh` | Checks the latest GitLab Helm chart and optionally updates the pinned chart version in `scripts/deploy_gitlab.sh`. |
 | `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
 | `bash scripts/check_status.sh` | Waits up to ten minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
-| `bash scripts/reset_local.sh` | Removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
-| `bash scripts/reset_cluster.sh` | Runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
+| `bash scripts/backup_gitlab.sh` | Runs a toolbox backup and copies the newest backup archive to `.backups/` on the host. |
+| `bash scripts/reset_local.sh` | Destructive: removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
+| `bash scripts/reset_cluster.sh` | Destructive: runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
 
 Use a longer health-check timeout when needed:
 
@@ -317,6 +384,33 @@ TIMEOUT_SECONDS=660 bash scripts/check_status.sh
 ```
 
 ## Reset and Start Over
+
+### Durable state
+
+The running local instance keeps durable state in Kubernetes PVCs backed by k3d
+Docker volumes:
+
+- Gitaly stores Git repository data.
+- CloudNativePG/PostgreSQL stores GitLab application data.
+- Garage stores object data such as uploads, artifacts, packages, LFS objects,
+  registry data, and backup archives.
+
+`k3d cluster stop gitlab-dev` preserves that state. The reset scripts remove the
+GitLab namespace and dependency releases, so treat them as data-destructive even
+when the k3d cluster itself remains.
+
+To stop the local environment without deleting data, stop the k3d cluster:
+
+```bash
+k3d cluster stop gitlab-dev
+```
+
+Start it again with:
+
+```bash
+k3d cluster start gitlab-dev
+bash scripts/check_status.sh
+```
 
 Reset GitLab and the external dependencies, but keep the k3d cluster:
 
@@ -454,9 +548,10 @@ bash scripts/create_user.sh \
   -n "Alice Example"
 ```
 
-The script generates and prints an 8-character password when `-p` is
-not provided. Add `-p 'TempPassword123!'` when you want to set a
-specific password.
+The script runs through the GitLab toolbox pod with `gitlab-rails runner`, so it
+uses GitLab's Rails models instead of writing directly to PostgreSQL tables. It
+generates and prints an 8-character password when `-p` is not provided. Add
+`-p 'TempPassword123!'` when you want to set a specific password.
 
 Reset an existing user's password:
 

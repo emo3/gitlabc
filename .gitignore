@@ -16,3 +16,4 @@ scripts/debug/chart-info
 .values
 .certs
 .chart
+.backups
