@@ -70,21 +70,30 @@ function rails_secret_name() {
     | awk '/rails-secret$/ { print; exit }'
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -d)
-      BACKUP_DIR="${2:-}"
-      shift 2
+while getopts ":d:h" opt; do
+  case "${opt}" in
+    d)
+      BACKUP_DIR="${OPTARG}"
       ;;
-    -h)
+    h)
       usage 0
       ;;
-    *)
-      echo "ERROR: Unknown argument: $1"
+    :)
+      echo "ERROR: -${OPTARG} requires an argument."
+      usage
+      ;;
+    \?)
+      echo "ERROR: Unknown argument: -${OPTARG}"
       usage
       ;;
   esac
 done
+shift $((OPTIND - 1))
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: Unexpected positional argument: $1"
+  usage
+fi
 
 if [[ -z "${BACKUP_DIR}" ]]; then
   echo "ERROR: -d BACKUP_DIR cannot be empty."

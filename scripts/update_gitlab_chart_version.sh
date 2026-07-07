@@ -32,29 +32,40 @@ Options:
 USAGE
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -a)
+while getopts ":amMh" opt; do
+  case "${opt}" in
+    a)
       APPLY=true
       ;;
-    -m)
+    m)
       ALLOW_MINOR=true
       ;;
-    -M)
+    M)
       ALLOW_MAJOR=true
       ;;
-    -h)
+    h)
       usage
       exit 0
       ;;
-    *)
-      echo "ERROR: Unknown argument: $1"
+    :)
+      echo "ERROR: -${OPTARG} requires an argument."
+      usage
+      exit 1
+      ;;
+    \?)
+      echo "ERROR: Unknown argument: -${OPTARG}"
       usage
       exit 1
       ;;
   esac
-  shift
 done
+shift $((OPTIND - 1))
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: Unexpected positional argument: $1"
+  usage
+  exit 1
+fi
 
 if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
   echo "ERROR: Deploy script not found at ${DEPLOY_SCRIPT}."
@@ -130,4 +141,4 @@ chmod +x "${DEPLOY_SCRIPT}"
 
 echo "Updated ${DEPLOY_SCRIPT}: ${CURRENT_VERSION} -> ${LATEST_VERSION}"
 echo "Deploy with:"
-echo "GITLAB_HTTPS=true GITLAB_TLS_SECRET=gitlab-local-tls bash scripts/deploy_gitlab.sh"
+echo "bash scripts/deploy_gitlab.sh"

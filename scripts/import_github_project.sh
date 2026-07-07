@@ -296,49 +296,48 @@ function import_refs() {
   fi
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -r)
-      SOURCE_REPO="${2:-}"
-      shift 2
+while getopts ":r:n:g:v:b:d:kh" opt; do
+  case "${opt}" in
+    r)
+      SOURCE_REPO="${OPTARG}"
       ;;
-    -n)
-      PROJECT_NAME="${2:-}"
-      shift 2
+    n)
+      PROJECT_NAME="${OPTARG}"
       ;;
-    -g)
-      GITLAB_GROUP="${2:-}"
-      shift 2
+    g)
+      GITLAB_GROUP="${OPTARG}"
       ;;
-    -v)
-      GITLAB_VISIBILITY="${2:-}"
-      shift 2
+    v)
+      GITLAB_VISIBILITY="${OPTARG}"
       ;;
-    -b)
-      DEFAULT_BRANCH="${2:-}"
-      shift 2
+    b)
+      DEFAULT_BRANCH="${OPTARG}"
       ;;
-    -d)
-      DESCRIPTION="${2:-}"
-      shift 2
+    d)
+      DESCRIPTION="${OPTARG}"
       ;;
-    -k)
+    k)
       KEEP_MIRROR="true"
-      shift
       ;;
-    -h)
+    h)
       usage 0
       ;;
-    -*)
-      echo "ERROR: Unknown option: $1"
+    :)
+      echo "ERROR: -${OPTARG} requires an argument."
       usage
       ;;
-    *)
-      echo "ERROR: Positional arguments are not supported. Use -r SOURCE."
+    \?)
+      echo "ERROR: Unknown argument: -${OPTARG}"
       usage
       ;;
   esac
 done
+shift $((OPTIND - 1))
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: Positional arguments are not supported. Use -r SOURCE."
+  usage
+fi
 
 if [[ -z "${SOURCE_REPO}" ]]; then
   echo "ERROR: -r SOURCE is required."

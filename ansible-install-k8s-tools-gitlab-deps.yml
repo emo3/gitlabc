@@ -5,11 +5,12 @@
   gather_facts: true
 
   vars:
-    kubectl_version: "v1.29.0"
+    kubectl_version: "v1.36.2"
     helm_version: "v4.2.2"
     glab_version: "1.106.0"
     helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
-    k3d_version: "5.8.3"
+    k3d_version: "5.9.0"
+    k3s_image: "rancher/k3s:v1.36.2-k3s1"
     mkcert_version: "v1.4.4"
     install_dir: "/usr/local/bin"
     install_docker: true
@@ -209,6 +210,7 @@
         url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/{{ binary_os }}/{{ binary_arch }}/kubectl"
         dest: "{{ install_dir }}/kubectl"
         mode: "0755"
+        force: true
 
     - name: Create Helm archive extraction directory
       ansible.builtin.file:
@@ -291,12 +293,14 @@
         url: "https://github.com/k3d-io/k3d/releases/download/v{{ k3d_version }}/k3d-{{ binary_os }}-{{ binary_arch }}"
         dest: "{{ install_dir }}/k3d"
         mode: "0755"
+        force: true
 
     - name: Download mkcert
       ansible.builtin.get_url:
         url: "https://dl.filippo.io/mkcert/{{ mkcert_version }}?for={{ binary_os }}/{{ binary_arch }}"
         dest: "{{ install_dir }}/mkcert"
         mode: "0755"
+        force: true
 
     - name: Check whether Docker is available
       ansible.builtin.command: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}'
@@ -304,6 +308,8 @@
       changed_when: false
       failed_when: false
       become: false
+      environment:
+        PATH: "{{ command_path }}"
 
     - name: Show Docker group/session requirement when unavailable
       ansible.builtin.debug:
@@ -312,12 +318,49 @@
         - is_linux | bool
         - docker_version_out.rc != 0
 
-    - name: Require reachable Docker Desktop on macOS
-      ansible.builtin.fail:
-        msg: "Docker is not reachable. On macOS, install and start Docker Desktop, then rerun this playbook."
+    - name: Start Docker Desktop on macOS
+      ansible.builtin.command:
+        argv:
+          - open
+          - -g
+          - -a
+          - Docker
+      register: docker_desktop_start_out
+      changed_when: docker_desktop_start_out.rc == 0
+      failed_when: false
+      become: false
       when:
         - is_macos | bool
         - docker_version_out.rc != 0
+
+    - name: Wait for Docker Desktop on macOS
+      ansible.builtin.command: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}'
+      register: docker_desktop_wait_out
+      changed_when: false
+      failed_when: false
+      become: false
+      environment:
+        PATH: "{{ command_path }}"
+      retries: 60
+      delay: 5
+      until: docker_desktop_wait_out.rc == 0
+      when:
+        - is_macos | bool
+        - docker_version_out.rc != 0
+
+    - name: Use Docker Desktop wait result on macOS
+      ansible.builtin.set_fact:
+        docker_version_out: "{{ docker_desktop_wait_out }}"
+      when:
+        - is_macos | bool
+        - docker_desktop_wait_out.rc is defined
+
+    - name: Require reachable Docker Desktop on macOS
+      ansible.builtin.fail:
+        msg: "Docker is not reachable. On macOS, install Docker Desktop or start it manually, then rerun this playbook."
+      when:
+        - is_macos | bool
+        - (docker_version_out.rc | default(1)) != 0
 
     - name: Verify kubectl is installed
       ansible.builtin.command: kubectl version --client --output=yaml
@@ -379,6 +422,8 @@
           - cluster
           - create
           - "{{ k3d_cluster_name }}"
+          - --image
+          - "{{ k3s_image }}"
           - --agents
           - "1"
           - --api-port

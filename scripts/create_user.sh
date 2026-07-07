@@ -60,41 +60,45 @@ function running_toolbox_pod() {
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
 }
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -u)
-      USERNAME="${2:-}"
-      shift 2
+while getopts ":u:e:n:p:aUh" opt; do
+  case "${opt}" in
+    u)
+      USERNAME="${OPTARG}"
       ;;
-    -e)
-      EMAIL="${2:-}"
-      shift 2
+    e)
+      EMAIL="${OPTARG}"
       ;;
-    -n)
-      NAME="${2:-}"
-      shift 2
+    n)
+      NAME="${OPTARG}"
       ;;
-    -p)
-      PASSWORD="${2:-}"
-      shift 2
+    p)
+      PASSWORD="${OPTARG}"
       ;;
-    -a)
+    a)
       ADMIN="true"
-      shift
       ;;
-    -U)
+    U)
       UPDATE_EXISTING="true"
-      shift
       ;;
-    -h)
+    h)
       usage 0
       ;;
-    *)
-      echo "ERROR: Unknown argument: $1"
+    :)
+      echo "ERROR: -${OPTARG} requires an argument."
+      usage
+      ;;
+    \?)
+      echo "ERROR: Unknown argument: -${OPTARG}"
       usage
       ;;
   esac
 done
+shift $((OPTIND - 1))
+
+if [[ $# -gt 0 ]]; then
+  echo "ERROR: Unexpected positional argument: $1"
+  usage
+fi
 
 if [[ -z "${USERNAME}" || -z "${EMAIL}" ]]; then
   echo "ERROR: -u USERNAME and -e EMAIL are required."

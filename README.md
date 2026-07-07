@@ -71,6 +71,7 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 | Stop without deleting data | `k3d cluster stop gitlab-dev` |
 | Start again | `k3d cluster start gitlab-dev && bash scripts/check_status.sh` |
 | Back up GitLab | `bash scripts/backup_gitlab.sh` |
+| Restore GitLab | `bash scripts/restore_gitlab.sh -l` then `bash scripts/restore_gitlab.sh` |
 | Import a GitHub project | `bash scripts/import_github_project.sh -r emo3/my_repo` |
 | Create a local user | `bash scripts/create_user.sh -u alice -e alice@example.com -n "Alice Example"` |
 | Destructive local reset | `bash scripts/reset_local.sh` |
@@ -118,7 +119,7 @@ bash scripts/import_github_project.sh -r emo3/my_repo -v private
 
 The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubectl`, Helm 4, `glab`, the `helm-git` plugin used by the Garage chart, k3d, and mkcert. It also creates a `gitlab-dev` k3d cluster, switches your kubeconfig to `k3d-gitlab-dev`, and verifies the Kubernetes API with `kubectl get nodes`.
 
-The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install and start Docker Desktop before running the playbook; Docker Engine installation and daemon DNS configuration are Linux-only.
+The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install Docker Desktop before running the playbook; the playbook starts Docker Desktop when needed and waits for it to become reachable. Docker Engine installation and daemon DNS configuration are Linux-only.
 
 By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
 
@@ -257,6 +258,47 @@ The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/de
 GITLAB_CHART_VERSION=10.1.1 bash scripts/deploy_gitlab.sh
 ```
 
+### Check latest stable versions
+
+Run the stable-version audit to compare the local pins with current upstream
+stable releases and verify installed local binaries match the pins:
+
+```bash
+bash scripts/check_latest_stable.sh
+```
+
+Use strict mode for automation. It exits non-zero if a pinned component is no
+longer latest stable:
+
+```bash
+bash scripts/check_latest_stable.sh -s
+```
+
+For a daily "latest stable and still healthy" check, combine the audit with the
+cluster health check:
+
+```bash
+bash scripts/check_latest_stable.sh -s -H
+```
+
+That command is safe to run daily because it does not mutate the cluster. Treat
+drift as a maintenance signal: GitLab chart patch upgrades can usually be
+applied with `scripts/update_gitlab_chart_version.sh -a`, but k3d, K3s, and
+Kubernetes version changes require a planned cluster rebuild after a backup.
+
+To schedule it with cron, create a log directory and add a daily entry:
+
+```bash
+mkdir -p .logs
+crontab -e
+```
+
+Example entry for 6:15 AM every day:
+
+```cron
+15 6 * * * cd /Users/emo3/code/gitlabc && bash scripts/check_latest_stable.sh -s -H >> .logs/latest-stable.log 2>&1
+```
+
 ### Update GitLab chart version
 
 Check the latest chart version from the official GitLab Helm repository:
@@ -331,67 +373,35 @@ bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
 
-Point `BACKUP_DIR` at the directory created by `backup_gitlab.sh`:
+List the backups available in the default `.backups/` directory:
 
 ```bash
-BACKUP_DIR="$HOME/gitlab-backups"
-BACKUP_TAR="$(ls -t "${BACKUP_DIR}"/*_gitlab_backup.tar | head -1)"
-BACKUP_FILE="$(basename "${BACKUP_TAR}")"
-RAILS_SECRETS="${BACKUP_DIR}/gitlab-rails-secrets.yaml"
+bash scripts/restore_gitlab.sh -l
 ```
 
-Restore the Rails secrets before restoring the backup archive:
+Restore the newest backup in `.backups/`:
 
 ```bash
-RAILS_SECRET="$(
-  kubectl --context k3d-gitlab-dev -n gitlab get secret -o name \
-    | sed -n 's|secret/\(.*rails-secret\)$|\1|p' \
-    | head -1
-)"
-
-kubectl --context k3d-gitlab-dev -n gitlab delete secret "${RAILS_SECRET}"
-kubectl --context k3d-gitlab-dev -n gitlab create secret generic "${RAILS_SECRET}" \
-  --from-file=secrets.yml="${RAILS_SECRETS}"
-
-kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=sidekiq,release=gitlab
-kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=webservice,release=gitlab
-kubectl --context k3d-gitlab-dev -n gitlab delete pods -lapp=toolbox,release=gitlab
-bash scripts/check_status.sh
+bash scripts/restore_gitlab.sh
 ```
 
-Copy the backup archive into the toolbox pod and run the restore:
+Restore a specific older backup:
 
 ```bash
-TOOLBOX_POD="$(
-  kubectl --context k3d-gitlab-dev -n gitlab get pod \
-    -l release=gitlab,app=toolbox \
-    --field-selector=status.phase=Running \
-    -o jsonpath='{.items[0].metadata.name}'
-)"
-
-kubectl --context k3d-gitlab-dev -n gitlab cp -c toolbox \
-  "${BACKUP_TAR}" \
-  "${TOOLBOX_POD}:/tmp/${BACKUP_FILE}"
-
-kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
-  -lapp=sidekiq,release=gitlab \
-  --replicas=0
-kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
-  -lapp=webservice,release=gitlab \
-  --replicas=0
-
-kubectl --context k3d-gitlab-dev -n gitlab exec "${TOOLBOX_POD}" -c toolbox -- \
-  backup-utility --restore -f "file:///tmp/${BACKUP_FILE}"
-
-kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
-  -lapp=sidekiq,release=gitlab \
-  --replicas=1
-kubectl --context k3d-gitlab-dev -n gitlab scale deploy \
-  -lapp=webservice,release=gitlab \
-  --replicas=1
-
-bash scripts/check_status.sh
+bash scripts/restore_gitlab.sh \
+  -f .backups/1783202695_2026_07_04_19.1.1-ee_gitlab_backup.tar
 ```
+
+Restore from a backup directory outside the repository:
+
+```bash
+bash scripts/restore_gitlab.sh -d "$HOME/gitlab-backups"
+```
+
+The restore helper replaces the Rails secrets, restarts GitLab pods, copies the
+selected archive into the toolbox pod, scales `sidekiq` and `webservice` down,
+runs `backup-utility --restore` with `GITLAB_ASSUME_YES=1`, scales them back up,
+and waits for status.
 
 ## Networking & Dynamic DNS Validation
 
@@ -454,10 +464,12 @@ External port 443 TCP -> internal port 443 on 192.168.86.141
 | `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
 | `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
 | `bash scripts/create_mkcert.sh` | Generates a local mkcert wildcard certificate and applies it as a Kubernetes TLS secret for trusted local HTTPS. |
+| `bash scripts/check_latest_stable.sh` | Checks pinned local tool and chart versions against current upstream stable releases. |
 | `bash scripts/update_gitlab_chart_version.sh` | Checks the latest GitLab Helm chart and optionally updates the pinned chart version in `scripts/deploy_gitlab.sh`. |
 | `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
 | `bash scripts/check_status.sh` | Waits up to ten minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
 | `bash scripts/backup_gitlab.sh` | Runs a toolbox backup and copies the newest backup archive to `.backups/` on the host. |
+| `bash scripts/restore_gitlab.sh` | Restores a selected GitLab backup archive from `.backups/` or another backup directory. |
 | `bash scripts/reset_local.sh` | Destructive: removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
 | `bash scripts/reset_cluster.sh` | Destructive: runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
 
@@ -622,6 +634,19 @@ Get the initial root password:
 ```bash
 kubectl get secret -n gitlab gitlab-gitlab-initial-root-password \
   -o go-template='{{index .data "password" | base64decode}}{{"\n"}}'
+```
+
+After restoring from a backup, that Kubernetes secret may no longer match the
+restored GitLab database. Reset `root` through the toolbox pod instead:
+
+```bash
+bash scripts/create_user.sh \
+  -u root \
+  -e root@example.com \
+  -n "Administrator" \
+  -p 'TempPassword123!' \
+  -a \
+  -U
 ```
 
 Create a user without relying on outbound email:
