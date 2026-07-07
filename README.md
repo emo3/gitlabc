@@ -283,8 +283,20 @@ bash scripts/check_latest_stable.sh -s -H
 
 That command is safe to run daily because it does not mutate the cluster. Treat
 drift as a maintenance signal: GitLab chart patch upgrades can usually be
-applied with `scripts/update_gitlab_chart_version.sh -a`, but k3d, K3s, and
-Kubernetes version changes require a planned cluster rebuild after a backup.
+applied with `scripts/update_gitlab_chart_version.sh -a`, but k3d changes
+require a planned cluster rebuild after a backup.
+
+Do not treat the latest K3s node image as automatically safer. Scanner findings
+can increase on newer `rancher/k3s` images because the image bundles OS packages
+as well as Kubernetes components. The playbook leaves `k3s_image` empty by
+default so k3d uses its default supported node image. Pin `k3s_image` only after
+your vulnerability scanner approves a candidate:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass \
+  -e k3s_image=rancher/k3s:v1.31.5-k3s1 \
+  ansible-install-k8s-tools-gitlab-deps.yml
+```
 
 To schedule it with cron, create a log directory and add a daily entry:
 

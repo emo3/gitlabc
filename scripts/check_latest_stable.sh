@@ -149,6 +149,11 @@ function installed_k3d_version() {
   k3d version 2>/dev/null | awk '$1 == "k3d" && $2 == "version" { print $3; exit }'
 }
 
+function installed_k3d_default_k3s_version() {
+  command -v k3d >/dev/null 2>&1 || return 0
+  k3d version 2>/dev/null | awk '$1 == "k3s" && $2 == "version" { print $3; exit }'
+}
+
 function installed_mkcert_version() {
   command -v mkcert >/dev/null 2>&1 || return 0
   mkcert --version 2>/dev/null
@@ -198,8 +203,13 @@ HELM_CURRENT="$(yaml_var helm_version)"
 GLAB_CURRENT="$(yaml_var glab_version)"
 K3D_CURRENT="$(yaml_var k3d_version)"
 K3S_IMAGE_CURRENT="$(yaml_var k3s_image)"
-K3S_CURRENT="${K3S_IMAGE_CURRENT##*:}"
-K3S_CURRENT="${K3S_CURRENT/-k3s/+k3s}"
+if [[ -n "${K3S_IMAGE_CURRENT}" ]]; then
+  K3S_CURRENT="${K3S_IMAGE_CURRENT##*:}"
+  K3S_CURRENT="${K3S_CURRENT/-k3s/+k3s}"
+else
+  K3S_DEFAULT="$(installed_k3d_default_k3s_version)"
+  K3S_CURRENT="${K3S_DEFAULT:-k3d default}"
+fi
 MKCERT_CURRENT="$(yaml_var mkcert_version)"
 GITLAB_CHART_CURRENT="$(shell_default_var GITLAB_CHART_VERSION "${DEPLOY_SCRIPT}")"
 GARAGE_CURRENT="$(sed -nE 's/^GARAGE_APP_VERSION="\$\{GARAGE_APP_VERSION:-([^}]+)\}"$/\1/p' "${PROJECT_ROOT}/scripts/dev_dependencies.sh" | head -1)"
@@ -224,7 +234,11 @@ add_result kubectl "${KUBECTL_CURRENT}" "${KUBECTL_LATEST}" "keep within one min
 add_result Helm "${HELM_CURRENT}" "${HELM_LATEST}"
 add_result glab "${GLAB_CURRENT}" "${GLAB_LATEST}"
 add_result k3d "${K3D_CURRENT}" "${K3D_LATEST}"
-add_result K3s "${K3S_CURRENT}" "${K3S_LATEST}" "cluster rebuild required to change"
+if [[ -n "${K3S_IMAGE_CURRENT}" ]]; then
+  add_result K3s "${K3S_CURRENT}" "${K3S_LATEST}" "cluster rebuild required to change"
+else
+  printf '%-24s %-24s %-24s %-8s %s\n' "K3s" "${K3S_CURRENT}" "${K3S_LATEST}" "INFO" "k3d default; set k3s_image only after scanner review"
+fi
 add_result mkcert "${MKCERT_CURRENT}" "${MKCERT_LATEST}"
 add_result "GitLab chart" "${GITLAB_CHART_CURRENT}" "${GITLAB_CHART_LATEST}" "app ${GITLAB_APP_LATEST}"
 add_result "Valkey chart" "${VALKEY_CHART_LATEST}" "${VALKEY_CHART_LATEST}" "tracks latest unless VALKEY_CHART_VERSION is set"

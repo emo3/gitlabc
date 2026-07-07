@@ -10,7 +10,7 @@
     glab_version: "1.106.0"
     helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
     k3d_version: "5.9.0"
-    k3s_image: "rancher/k3s:v1.36.2-k3s1"
+    k3s_image: ""
     mkcert_version: "v1.4.4"
     install_dir: "/usr/local/bin"
     install_docker: true
@@ -415,26 +415,36 @@
         PATH: "{{ command_path }}"
       when: create_k3d_cluster | bool
 
+    - name: Build k3d cluster create command
+      ansible.builtin.set_fact:
+        k3d_cluster_create_argv: >-
+          {{
+            [
+              install_dir ~ '/k3d',
+              'cluster',
+              'create',
+              k3d_cluster_name
+            ]
+            + ((k3s_image | trim | length > 0) | ternary(['--image', k3s_image], []))
+            + [
+              '--agents',
+              '1',
+              '--api-port',
+              '127.0.0.1:6443',
+              '--port',
+              '80:80@loadbalancer',
+              '--port',
+              '443:443@loadbalancer',
+              '--k3s-arg',
+              '--disable=traefik@server:0',
+              '--wait'
+            ]
+          }}
+      when: create_k3d_cluster | bool
+
     - name: Create k3d cluster
       ansible.builtin.command:
-        argv:
-          - "{{ install_dir }}/k3d"
-          - cluster
-          - create
-          - "{{ k3d_cluster_name }}"
-          - --image
-          - "{{ k3s_image }}"
-          - --agents
-          - "1"
-          - --api-port
-          - "127.0.0.1:6443"
-          - --port
-          - "80:80@loadbalancer"
-          - --port
-          - "443:443@loadbalancer"
-          - --k3s-arg
-          - "--disable=traefik@server:0"
-          - --wait
+        argv: "{{ k3d_cluster_create_argv }}"
       become: true
       become_user: "{{ docker_user }}"
       environment:
