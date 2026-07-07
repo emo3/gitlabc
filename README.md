@@ -240,9 +240,9 @@ kubectl get ingress -n gitlab
 curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
 ```
 
-The public profile also disables the Web IDE single-origin fallback warning by
-setting `vscode_extension_marketplace_single_origin_fallback_enabled=false`.
-By default it keeps GitLab's upstream extension host domain,
+The deploy helper disables the Web IDE single-origin fallback warning by setting
+`vscode_extension_marketplace_single_origin_fallback_enabled=false` for both
+local and public profiles. By default it keeps GitLab's upstream extension host domain,
 `cdn.web-ide.gitlab-static.net`. To use a custom host, provide a wildcard DNS
 and TLS setup first, then deploy with:
 

@@ -99,23 +99,19 @@ function running_toolbox_pod() {
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
 }
 
-function harden_public_web_ide() {
+function configure_web_ide_extension_host() {
   local toolbox_pod
-
-  if [[ "${GITLAB_DEPLOY_PROFILE}" != "public-letsencrypt" ]]; then
-    return 0
-  fi
 
   validate_boolean PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED "${PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED}"
 
   toolbox_pod="$(running_toolbox_pod)"
   if [[ -z "${toolbox_pod}" ]]; then
-    echo "WARNING: Toolbox pod is not running yet; could not apply public Web IDE hardening."
-    echo "         Run this after GitLab is healthy: GITLAB_DEPLOY_PROFILE=public-letsencrypt bash scripts/deploy_gitlab.sh"
+    echo "WARNING: Toolbox pod is not running yet; could not configure Web IDE extension host settings."
+    echo "         Run this after GitLab is healthy: bash scripts/deploy_gitlab.sh"
     return 0
   fi
 
-  echo "Configuring public Web IDE extension host settings..."
+  echo "Configuring Web IDE extension host settings..."
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${toolbox_pod}" -c toolbox -- \
     env \
       PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN="${PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN}" \
@@ -293,7 +289,7 @@ if [[ "${DISABLE_PUBLIC_SIGNUPS}" == "true" ]]; then
   disable_public_signups
 fi
 
-harden_public_web_ide
+configure_web_ide_extension_host
 configure_glab_oauth
 
 echo "GitLab deploy submitted."
