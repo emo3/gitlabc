@@ -108,6 +108,50 @@ command writes the user auth token to that same config directory. The import
 script uses the same `XDG_CONFIG_HOME` default, so deploy, auth, and import
 read one glab configuration.
 
+#### Git HTTPS credentials
+
+macOS:
+
+```bash
+TOKEN=$(awk '$1=="gitlab.127.0.0.1.nip.io:" {inhost=1; next} inhost && $1=="token:" {print $2; exit}' \
+  ../.glab-config/glab-cli/config.yml)
+
+printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\nusername=oauth2\npassword=%s\n\n" "$TOKEN" \
+  | git credential-osxkeychain store
+```
+
+Check:
+
+```bash
+printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\n\n" \
+  | git credential-osxkeychain get \
+  | sed 's/^password=.*/password=<redacted>/'
+```
+
+AlmaLinux 9:
+
+```bash
+git config --global credential.helper store
+
+TOKEN=$(awk '$1=="gitlab.127.0.0.1.nip.io:" {inhost=1; next} inhost && $1=="token:" {print $2; exit}' \
+  ../.glab-config/glab-cli/config.yml)
+
+printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\nusername=oauth2\npassword=%s\n\n" "$TOKEN" \
+  | git credential-store store
+
+chmod 600 ~/.git-credentials
+```
+
+Check:
+
+```bash
+printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\n\n" \
+  | git credential-store get \
+  | sed 's/^password=.*/password=<redacted>/'
+```
+
+Expected output includes `username=oauth2` and `password=<redacted>`.
+
 Use environment variables or flags to target another namespace or visibility:
 
 ```bash
