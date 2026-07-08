@@ -68,6 +68,7 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 | Task | Command |
 | --- | --- |
 | Check health | `bash scripts/check_status.sh` |
+| Configure k3d registry pulls | `bash scripts/configure_k3d_registry_pull.sh` |
 | Stop without deleting data | `k3d cluster stop gitlab-dev` |
 | Start again | `k3d cluster start gitlab-dev && bash scripts/check_status.sh` |
 | Back up GitLab | `bash scripts/backup_gitlab.sh` |
@@ -75,6 +76,10 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 | Import a GitHub project | `bash scripts/import_github_project.sh -r emo3/my_repo` |
 | Create a local user | `bash scripts/create_user.sh -u alice -e alice@example.com -n "Alice Example"` |
 | Destructive local reset | `bash scripts/reset_local.sh` |
+
+`configure_k3d_registry_pull.sh` is for the standalone Kubernetes runner. It
+lets k3d nodes pull `registry.127.0.0.1.nip.io` images directly through the
+local GitLab HTTPS ingress.
 
 ### Import GitHub projects
 
@@ -110,47 +115,32 @@ read one glab configuration.
 
 #### Git HTTPS credentials
 
-macOS:
+Run once per machine/user after `glab auth login`:
 
 ```bash
-TOKEN=$(awk '$1=="gitlab.127.0.0.1.nip.io:" {inhost=1; next} inhost && $1=="token:" {print $2; exit}' \
-  ../.glab-config/glab-cli/config.yml)
-
-printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\nusername=oauth2\npassword=%s\n\n" "$TOKEN" \
-  | git credential-osxkeychain store
+bash scripts/store_git_https_credentials.sh
 ```
 
+Expected check output:
+
+```text
+Stored Git HTTPS credentials for gitlab.127.0.0.1.nip.io.
+Configured Git to use oauth2 and rewrite local GitLab SSH URLs to HTTPS.
 Check:
-
-```bash
-printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\n\n" \
-  | git credential-osxkeychain get \
-  | sed 's/^password=.*/password=<redacted>/'
+username=oauth2
+password=<redacted>
 ```
 
-AlmaLinux 9:
+Use HTTPS remotes for local GitLab:
 
 ```bash
-git config --global credential.helper store
-
-TOKEN=$(awk '$1=="gitlab.127.0.0.1.nip.io:" {inhost=1; next} inhost && $1=="token:" {print $2; exit}' \
-  ../.glab-config/glab-cli/config.yml)
-
-printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\nusername=oauth2\npassword=%s\n\n" "$TOKEN" \
-  | git credential-store store
-
-chmod 600 ~/.git-credentials
+git remote set-url origin https://gitlab.127.0.0.1.nip.io/gitlab/project.git
 ```
 
-Check:
-
-```bash
-printf "protocol=https\nhost=gitlab.127.0.0.1.nip.io\n\n" \
-  | git credential-store get \
-  | sed 's/^password=.*/password=<redacted>/'
-```
-
-Expected output includes `username=oauth2` and `password=<redacted>`.
+The script uses macOS Keychain on macOS and Git's file-backed credential store
+on Linux/AlmaLinux 9. It is safe to rerun when the `glab` token changes.
+SSH clone URLs are rewritten locally to HTTPS because k3d does not expose SSH
+on host port 22.
 
 Use environment variables or flags to target another namespace or visibility:
 

@@ -24,6 +24,7 @@ SETUP_LOCAL_TLS="${SETUP_LOCAL_TLS:-true}"
 RESTART_GITLAB_WORKLOADS="${RESTART_GITLAB_WORKLOADS:-true}"
 DISABLE_PUBLIC_SIGNUPS="${DISABLE_PUBLIC_SIGNUPS:-true}"
 CONFIGURE_GLAB_OAUTH="${CONFIGURE_GLAB_OAUTH:-true}"
+CONFIGURE_K3D_REGISTRY_PULLS="${CONFIGURE_K3D_REGISTRY_PULLS:-true}"
 GLAB_OAUTH_APP_NAME="${GLAB_OAUTH_APP_NAME:-glab-cli}"
 GLAB_OAUTH_REDIRECT_URI="${GLAB_OAUTH_REDIRECT_URI:-http://localhost:7171/auth/redirect}"
 GLAB_OAUTH_SCOPES="${GLAB_OAUTH_SCOPES:-openid profile read_user write_repository api}"
@@ -283,6 +284,12 @@ if [[ "${RESTART_GITLAB_WORKLOADS}" == "true" ]]; then
   echo "Restarting GitLab workloads that consume external dependency secrets..."
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" rollout restart deployment \
     -l "release=${RELEASE_NAME},app in (webservice,sidekiq,kas,gitlab-exporter)"
+fi
+
+if [[ "${CONFIGURE_K3D_REGISTRY_PULLS}" == "true" && "${GITLAB_DEPLOY_PROFILE}" != "public-letsencrypt" ]]; then
+  echo "Configuring k3d nodes for local GitLab registry pulls..."
+  NAMESPACE="${NAMESPACE}" KUBE_CONTEXT="${KUBE_CONTEXT}" K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME}" GITLAB_DOMAIN="${GITLAB_DOMAIN}" \
+    bash scripts/configure_k3d_registry_pull.sh
 fi
 
 if [[ "${DISABLE_PUBLIC_SIGNUPS}" == "true" ]]; then

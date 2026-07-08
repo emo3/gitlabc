@@ -21,6 +21,9 @@
       - "8.8.8.8"
     create_k3d_cluster: true
     k3d_cluster_name: "gitlab-dev"
+    gitlab_domain: "127.0.0.1.nip.io"
+    k3d_subnet: "172.28.0.0/16"
+    k3d_host_gateway_ip: "172.28.0.1"
 
   handlers:
     - name: Restart Docker
@@ -415,6 +418,26 @@
         PATH: "{{ command_path }}"
       when: create_k3d_cluster | bool
 
+    - name: Ensure gitlabc local k3d config directory exists
+      ansible.builtin.file:
+        path: "{{ docker_user_home }}/.config/gitlabc"
+        state: directory
+        owner: "{{ docker_user }}"
+        mode: "0755"
+      when: create_k3d_cluster | bool
+
+    - name: Write k3d registry pull config for local GitLab registry
+      ansible.builtin.copy:
+        dest: "{{ docker_user_home }}/.config/gitlabc/k3d-registries.yaml"
+        owner: "{{ docker_user }}"
+        mode: "0644"
+        content: |
+          configs:
+            "registry.{{ gitlab_domain }}":
+              tls:
+                insecure_skip_verify: true
+      when: create_k3d_cluster | bool
+
     - name: Build k3d cluster create command
       ansible.builtin.set_fact:
         k3d_cluster_create_argv: >-
@@ -429,12 +452,18 @@
             + [
               '--agents',
               '1',
+              '--subnet',
+              k3d_subnet,
               '--api-port',
               '127.0.0.1:6443',
               '--port',
               '80:80@loadbalancer',
               '--port',
               '443:443@loadbalancer',
+              '--host-alias',
+              k3d_host_gateway_ip ~ ':gitlab.' ~ gitlab_domain ~ ',registry.' ~ gitlab_domain,
+              '--registry-config',
+              docker_user_home ~ '/.config/gitlabc/k3d-registries.yaml',
               '--k3s-arg',
               '--disable=traefik@server:0',
               '--wait'
@@ -474,6 +503,23 @@
       when:
         - create_k3d_cluster | bool
         - k3d_cluster_check.rc == 0
+
+    - name: Configure k3d nodes for local GitLab registry pulls
+      ansible.builtin.command:
+        argv:
+          - bash
+          - scripts/configure_k3d_registry_pull.sh
+      args:
+        chdir: "{{ playbook_dir }}"
+      become: true
+      become_user: "{{ docker_user }}"
+      environment:
+        HOME: "{{ docker_user_home }}"
+        KUBECONFIG: "{{ docker_user_home }}/.kube/config"
+        PATH: "{{ command_path }}"
+        K3D_CLUSTER_NAME: "{{ k3d_cluster_name }}"
+        GITLAB_DOMAIN: "{{ gitlab_domain }}"
+      when: create_k3d_cluster | bool
 
     - name: Use k3d context
       ansible.builtin.command: "kubectl config use-context k3d-{{ k3d_cluster_name }}"
