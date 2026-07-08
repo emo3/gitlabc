@@ -461,6 +461,7 @@ gitlab:
           key: config
 
 registry:
+  authEndpoint: http://gitlab-webservice-default.gitlab.svc.cluster.local:8181
   storage:
     secret: $(garage_release_name)-gitlab-registry-storage
     key: config
