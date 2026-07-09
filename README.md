@@ -91,7 +91,7 @@ XDG_CONFIG_HOME=../.glab-config glab auth login \
   --hostname gitlab.127.0.0.1.nip.io \
   --api-host gitlab.127.0.0.1.nip.io \
   --api-protocol https \
-  --git-protocol https \
+  --git-protocol ssh \
   --web \
   --container-registry-domains ''
 ```
@@ -138,33 +138,6 @@ Check SSH access:
 ssh -T -p 2222 git@gitlab.127.0.0.1.nip.io
 ```
 
-#### Git HTTPS credentials
-
-HTTPS credentials are a legacy fallback if SSH is not available. Run once per
-machine/user after `glab auth login`:
-
-```bash
-bash scripts/store_git_https_credentials.sh
-```
-
-Expected check output:
-
-```text
-Stored Git HTTPS credentials for gitlab.127.0.0.1.nip.io.
-Configured Git to use oauth2 and rewrite local GitLab SSH URLs to HTTPS.
-Check:
-username=oauth2
-password=<redacted>
-```
-
-Use HTTPS remotes for local GitLab:
-
-```bash
-git remote set-url origin https://gitlab.127.0.0.1.nip.io/gitlab/project.git
-```
-
-The script uses macOS Keychain on macOS and Git's file-backed credential store
-on Linux/AlmaLinux 9. It is safe to rerun when the `glab` token changes.
 The preferred SSH path uses port `2222` because host port `22` normally belongs
 to the workstation.
 
