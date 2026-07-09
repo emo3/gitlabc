@@ -113,9 +113,35 @@ command writes the user auth token to that same config directory. The import
 script uses the same `XDG_CONFIG_HOME` default, so deploy, auth, and import
 read one glab configuration.
 
+#### Git SSH credentials
+
+SSH is the preferred Git transport for local GitLab projects. The local k3d
+cluster exposes GitLab Shell on host port `2222`, and the GitLab chart advertises
+that port in SSH clone URLs.
+
+Run once per machine/user after `glab auth login` to add your local public key to
+GitLab:
+
+```bash
+bash scripts/configure_gitlab_ssh_key.sh
+```
+
+Use SSH remotes for local GitLab:
+
+```bash
+git remote set-url origin ssh://git@gitlab.127.0.0.1.nip.io:2222/gitlab/project.git
+```
+
+Check SSH access:
+
+```bash
+ssh -T -p 2222 git@gitlab.127.0.0.1.nip.io
+```
+
 #### Git HTTPS credentials
 
-Run once per machine/user after `glab auth login`:
+HTTPS credentials are a legacy fallback if SSH is not available. Run once per
+machine/user after `glab auth login`:
 
 ```bash
 bash scripts/store_git_https_credentials.sh
@@ -139,8 +165,8 @@ git remote set-url origin https://gitlab.127.0.0.1.nip.io/gitlab/project.git
 
 The script uses macOS Keychain on macOS and Git's file-backed credential store
 on Linux/AlmaLinux 9. It is safe to rerun when the `glab` token changes.
-SSH clone URLs are rewritten locally to HTTPS because k3d does not expose SSH
-on host port 22.
+The preferred SSH path uses port `2222` because host port `22` normally belongs
+to the workstation.
 
 Use environment variables or flags to target another namespace or visibility:
 

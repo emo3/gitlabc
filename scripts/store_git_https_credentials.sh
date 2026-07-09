@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Store the repo-local glab OAuth token where plain Git HTTPS can use it.
+# Legacy fallback: store the repo-local glab OAuth token where plain Git HTTPS can use it.
 
 set -eo pipefail
 [[ "${TRACE}" ]] && set -x

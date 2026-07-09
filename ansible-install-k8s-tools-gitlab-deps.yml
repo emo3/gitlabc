@@ -460,6 +460,8 @@
               '80:80@loadbalancer',
               '--port',
               '443:443@loadbalancer',
+              '--port',
+              '2222:2222@loadbalancer',
               '--host-alias',
               k3d_host_gateway_ip ~ ':gitlab.' ~ gitlab_domain ~ ',registry.' ~ gitlab_domain,
               '--registry-config',
