@@ -541,6 +541,9 @@
       ansible.builtin.command: kubectl get nodes
       register: k3d_nodes_out
       changed_when: false
+      until: k3d_nodes_out.rc == 0
+      retries: 36
+      delay: 5
       become: true
       become_user: "{{ docker_user }}"
       environment:
