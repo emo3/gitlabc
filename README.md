@@ -154,6 +154,14 @@ The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubec
 
 The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install Docker Desktop before running the playbook; the playbook starts Docker Desktop when needed and waits for it to become reachable. Docker Engine installation and daemon DNS configuration are Linux-only.
 
+Starting an existing k3d cluster waits up to two minutes by default. Override the timeout with a Go duration such as `30s`, `5m`, or `1h`:
+
+```bash
+ansible-playbook -i localhost, --connection=local --ask-become-pass \
+  -e k3d_cluster_start_timeout=5m \
+  ansible-install-k8s-tools-gitlab-deps.yml
+```
+
 By default, the playbook also makes Docker's container DNS deterministic by merging this setting into `/etc/docker/daemon.json`:
 
 ```json
