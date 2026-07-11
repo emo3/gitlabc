@@ -7,12 +7,13 @@ set -eo pipefail
 [[ "${TRACE}" ]] && set -x
 
 NAMESPACE="${NAMESPACE:-gitlab}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
-SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
+TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-720}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-30}"
+KUBECTL_REQUEST_TIMEOUT="${KUBECTL_REQUEST_TIMEOUT:-5s}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 
-KUBECTL=(kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}")
+KUBECTL=(kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" -n "${NAMESPACE}")
 
 function require_positive_integer() {
   local name="$1"
@@ -29,7 +30,18 @@ function context_exists() {
 }
 
 function namespace_exists() {
-  kubectl --context "${KUBE_CONTEXT}" get namespace "${NAMESPACE}" > /dev/null 2>&1
+  kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" get namespace "${NAMESPACE}" > /dev/null 2>&1
+}
+
+function api_ready() {
+  kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" get --raw=/readyz > /dev/null 2>&1
+}
+
+function print_api_error() {
+  local error
+
+  error="$(kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" get --raw=/readyz 2>&1 > /dev/null || true)"
+  echo "  Kubernetes API is unreachable: ${error:-readiness check failed}"
 }
 
 function pods_ready() {
@@ -82,9 +94,9 @@ function print_wait_reasons() {
   pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null)"
   if [[ -z "${pods}" ]]; then
     echo "  no pods found yet"
-  fi
-
-  not_ready_pods="$(awk '
+    not_ready_pods=""
+  else
+    not_ready_pods="$(awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {
@@ -93,6 +105,7 @@ function print_wait_reasons() {
         print "  pod " $0
       }
     }' <<< "${pods}")"
+  fi
 
   not_ready_jobs="$("${KUBECTL[@]}" get jobs --no-headers 2>/dev/null | awk '
     {
@@ -136,6 +149,13 @@ function print_status() {
 function print_issues() {
   echo ""
   echo "Timed out after ${TIMEOUT_SECONDS}s. Focused diagnostics:"
+
+  if ! api_ready; then
+    echo ""
+    print_api_error
+    echo "  Pod, job, ingress, and event diagnostics are unavailable until the API recovers."
+    return
+  fi
 
   echo ""
   echo "== Non-ready pods =="
@@ -215,15 +235,22 @@ fi
 require_positive_integer TIMEOUT_SECONDS "${TIMEOUT_SECONDS}"
 require_positive_integer SLEEP_SECONDS "${SLEEP_SECONDS}"
 
-if ! namespace_exists; then
-  echo "ERROR: Namespace '${NAMESPACE}' was not found in context '${KUBE_CONTEXT}'."
-  exit 1
-fi
-
 echo "Waiting up to ${TIMEOUT_SECONDS}s for namespace '${NAMESPACE}' in context '${KUBE_CONTEXT}'..."
 
 deadline=$((SECONDS + TIMEOUT_SECONDS))
 while (( SECONDS < deadline )); do
+  if ! api_ready; then
+    echo "Still waiting..."
+    print_api_error
+    sleep "${SLEEP_SECONDS}"
+    continue
+  fi
+
+  if ! namespace_exists; then
+    echo "ERROR: Namespace '${NAMESPACE}' was not found in context '${KUBE_CONTEXT}'."
+    exit 1
+  fi
+
   if pods_ready && jobs_ready && ingress_ready; then
     echo "GitLab namespace is healthy."
     print_status

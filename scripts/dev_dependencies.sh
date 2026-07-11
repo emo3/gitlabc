@@ -25,6 +25,85 @@ source "${UPSTREAM_SCRIPT_DIR}/ci/lib/valkey.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/cloudnativepg.sh"
 source "${UPSTREAM_SCRIPT_DIR}/ci/lib/garage.sh"
 
+function base64_decode() {
+  if base64 --decode >/dev/null 2>&1 <<< ""; then
+    base64 --decode
+  else
+    base64 -D
+  fi
+}
+
+function valkey_password() {
+  local password
+
+  password="$(openssl rand -hex 16 2>/dev/null || true)"
+  if [[ -z "${password}" ]]; then
+    password="$(uuidgen 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${password}" ]]; then
+    echo "ERROR: Failed to generate Valkey password." >&2
+    exit 1
+  fi
+
+  echo -n "${password}"
+}
+
+function valkey_auth_secret_has_password() {
+  secret_key_has_value "$(valkey_auth_secret)" "$(valkey_auth_secret_key)"
+}
+
+function ensure_valkey_auth_secret_is_usable() {
+  if kubectl get secret "$(valkey_auth_secret)" -n "${NAMESPACE}" > /dev/null 2>&1 \
+      && ! valkey_auth_secret_has_password; then
+    echo "Valkey auth secret '$(valkey_auth_secret)' has an empty password. Recreating it."
+    kubectl delete secret -n "${NAMESPACE}" "$(valkey_auth_secret)"
+  fi
+}
+
+function secret_key_has_value() {
+  local secret_name="$1"
+  local secret_key="$2"
+  local encoded_value
+
+  encoded_value="$(
+    kubectl get secret "${secret_name}" \
+      -n "${NAMESPACE}" \
+      -o "jsonpath={.data.${secret_key}}" 2>/dev/null || true
+  )"
+
+  [[ -n "${encoded_value}" ]]
+}
+
+function require_secret_key_has_value() {
+  local secret_name="$1"
+  local secret_key="$2"
+
+  if ! secret_key_has_value "${secret_name}" "${secret_key}"; then
+    echo "ERROR: Secret '${secret_name}' is missing key '${secret_key}' or the value is empty."
+    return 1
+  fi
+}
+
+function validate_external_dependencies() {
+  local failed=0
+
+  echo "Validating external dependency contract..."
+
+  require_secret_key_has_value "$(valkey_auth_secret)" "$(valkey_auth_secret_key)" || failed=1
+  require_secret_key_has_value "$(cnpg_cluster_secret)" password || failed=1
+  require_secret_key_has_value "$(garage_release_name)-gitlab-object-storage" config || failed=1
+  require_secret_key_has_value "$(garage_release_name)-gitlab-object-storage-s3cmd" config || failed=1
+  require_secret_key_has_value "$(garage_release_name)-gitlab-registry-storage" config || failed=1
+
+  if [[ "${failed}" -ne 0 ]]; then
+    echo "ERROR: External dependencies are not ready. Run: bash scripts/dev_dependencies.sh setup"
+    return 1
+  fi
+
+  echo "External dependency contract is valid."
+}
+
 function garage_gitlab_storage_secrets_exist() {
   kubectl get secret \
     "$(garage_release_name)-gitlab-object-storage" \
@@ -44,7 +123,7 @@ function garage_registry_access_key() {
   kubectl get secret "$(garage_release_name)-gitlab-registry-storage" \
     -n "${NAMESPACE}" \
     -o jsonpath='{.data.config}' 2>/dev/null \
-    | base64 -d \
+    | base64_decode \
     | awk -F': *' '$1 ~ /^[[:space:]]*accesskey$/ { print $2; exit }'
 }
 
@@ -91,7 +170,19 @@ function ensure_helm_repo() {
 
 function deploy_local_valkey() {
   ensure_helm_repo valkey https://valkey.io/valkey-helm/
+  ensure_valkey_auth_secret_is_usable
   deploy_external_valkey
+  restart_valkey_for_current_secret
+}
+
+function restart_valkey_for_current_secret() {
+  if ! kubectl "${KUBECTL_CONTEXT_ARGS[@]}" -n "${NAMESPACE}" get deployment "$(valkey_release_name)" > /dev/null 2>&1; then
+    return
+  fi
+
+  echo "Restarting Valkey so its ACL file matches the current auth secret..."
+  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" -n "${NAMESPACE}" rollout restart deployment/"$(valkey_release_name)"
+  kubectl "${KUBECTL_CONTEXT_ARGS[@]}" -n "${NAMESPACE}" rollout status deployment/"$(valkey_release_name)" --timeout=180s
 }
 
 function install_local_cnpg_operator() {
@@ -100,9 +191,29 @@ function install_local_cnpg_operator() {
 }
 
 function deploy_external_garage() {
+  local garage_persistence_args=()
+
   if [[ -z "${NAMESPACE}" ]]; then
     echo "Error: NAMESPACE environment variable is not set"
     exit 1
+  fi
+
+  validate_boolean GARAGE_PERSISTENCE_ENABLED "${GARAGE_PERSISTENCE_ENABLED}"
+  if [[ "${GARAGE_PERSISTENCE_ENABLED}" == "true" ]]; then
+    garage_persistence_args+=(
+      --set persistence.enabled=true
+      --set "persistence.meta.size=${GARAGE_META_PERSISTENCE_SIZE}"
+      --set "persistence.data.size=${GARAGE_DATA_PERSISTENCE_SIZE}"
+    )
+
+    if [[ -n "${GARAGE_STORAGE_CLASS}" ]]; then
+      garage_persistence_args+=(
+        --set "persistence.meta.storageClass=${GARAGE_STORAGE_CLASS}"
+        --set "persistence.data.storageClass=${GARAGE_STORAGE_CLASS}"
+      )
+    fi
+  else
+    garage_persistence_args+=(--set persistence.enabled=false)
   fi
 
   if helm status "$(garage_release_name)" -n "${NAMESPACE}" > /dev/null 2>&1; then
@@ -131,7 +242,7 @@ function deploy_external_garage() {
       -n "${NAMESPACE}" \
       --set garage.replicationFactor=1 \
       --set deployment.replicaCount=1 \
-      --set persistence.enabled=false \
+      "${garage_persistence_args[@]}" \
       --set environment[0].name=RUST_LOG \
       --set environment[0].value="garage=warn" \
       --set resources.requests.memory="256Mi" \
@@ -250,6 +361,10 @@ EOF
 
 NAMESPACE="${NAMESPACE:-gitlab}"
 GARAGE_APP_VERSION="${GARAGE_APP_VERSION:-2.2.0}"
+GARAGE_PERSISTENCE_ENABLED="${GARAGE_PERSISTENCE_ENABLED:-true}"
+GARAGE_META_PERSISTENCE_SIZE="${GARAGE_META_PERSISTENCE_SIZE:-1Gi}"
+GARAGE_DATA_PERSISTENCE_SIZE="${GARAGE_DATA_PERSISTENCE_SIZE:-10Gi}"
+GARAGE_STORAGE_CLASS="${GARAGE_STORAGE_CLASS:-}"
 CNPG_POSTGRESQL_TAG="${CNPG_POSTGRESQL_TAG:-17}"
 CNPG_CLUSTER_READY_TIMEOUT="${CNPG_CLUSTER_READY_TIMEOUT:-600s}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
@@ -305,6 +420,8 @@ global:
       secret: "$(cnpg_cluster_secret)"
       key: password
   appConfig:
+    initialDefaults:
+      signupEnabled: false
     object_store:
       enabled: true
       proxy_download: true
@@ -344,6 +461,7 @@ gitlab:
           key: config
 
 registry:
+  authEndpoint: https://gitlab.127.0.0.1.nip.io
   storage:
     secret: $(garage_release_name)-gitlab-registry-storage
     key: config
@@ -372,6 +490,7 @@ function cmd_setup() {
   deploy_external_garage
 
   generate_values_file
+  validate_external_dependencies
 
   echo ""
   echo "==> All external dependencies are ready."
@@ -407,6 +526,20 @@ function cmd_teardown() {
   echo "The namespace '${NAMESPACE}' and GitLab chart release are not affected."
 }
 
+function validate_boolean() {
+  local name="$1"
+  local value="$2"
+
+  case "${value}" in
+    true|false)
+      ;;
+    *)
+      echo "ERROR: ${name} must be 'true' or 'false'."
+      exit 1
+      ;;
+  esac
+}
+
 function cmd_status() {
   check_prerequisites
   use_kube_context
@@ -424,6 +557,11 @@ function cmd_status() {
     --namespace "${NAMESPACE}" \
     -l "app.kubernetes.io/instance=$(valkey_release_name)" 2>/dev/null \
     || echo "  Not found"
+  if valkey_auth_secret_has_password; then
+    echo "  auth secret: present with non-empty $(valkey_auth_secret_key)"
+  else
+    echo "  auth secret: missing or empty $(valkey_auth_secret_key)"
+  fi
 
   echo ""
   echo "--- CloudNativePG operator ($(cnpg_release_name)) ---"
@@ -458,17 +596,38 @@ function cmd_status() {
   done
 }
 
+function cmd_validate() {
+  check_prerequisites
+  use_kube_context
+
+  if ! namespace_exists; then
+    echo "ERROR: Namespace '${NAMESPACE}' was not found."
+    exit 1
+  fi
+
+  validate_external_dependencies
+}
+
 function usage() {
   cat <<EOF
-Usage: $0 {setup|teardown|status}
+Usage: $0 {setup|teardown|status|validate}
 
   setup    Deploy Valkey, CloudNativePG, and Garage as external GitLab dependencies.
   teardown Remove the deployed external dependencies (does not remove the GitLab release).
   status   Show the current status of the external dependencies.
+  validate Fail unless all generated dependency secrets exist with non-empty values.
 
 Environment variables:
   NAMESPACE           Kubernetes namespace to use (default: gitlab)
   GARAGE_APP_VERSION  Garage version to install (default: 2.2.0)
+  GARAGE_PERSISTENCE_ENABLED
+                      Persist Garage object storage on PVCs (default: true)
+  GARAGE_META_PERSISTENCE_SIZE
+                      Garage metadata PVC size (default: 1Gi)
+  GARAGE_DATA_PERSISTENCE_SIZE
+                      Garage data PVC size (default: 10Gi)
+  GARAGE_STORAGE_CLASS
+                      Storage class for Garage PVCs (default: cluster default)
   CNPG_POSTGRESQL_TAG PostgreSQL image tag for CloudNativePG (default: 17)
   CNPG_CLUSTER_READY_TIMEOUT
                       Time to wait for the CNPG cluster to become Ready (default: 600s)
@@ -481,5 +640,6 @@ case "${1:-}" in
   setup)    cmd_setup ;;
   teardown) cmd_teardown ;;
   status)   cmd_status ;;
+  validate) cmd_validate ;;
   *)        usage ;;
 esac
