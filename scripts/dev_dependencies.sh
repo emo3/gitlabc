@@ -467,6 +467,19 @@ registry:
     key: config
     redirect:
       disable: true
+  # CloudNativePG provisions this database during local dependency setup.
+  # New local GitLab deployments use registry metadata storage from the start.
+  database:
+    configure: true
+    enabled: true
+    name: registry
+    user: registry
+    password:
+      secret: $(cnpg_cluster_name)-registry-app
+      key: password
+    sslmode: disable
+    migrations:
+      enabled: true
 EOF
 
   echo "    Generated values file: ${GENERATED_VALUES}"

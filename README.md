@@ -240,6 +240,26 @@ Regenerate the certificate when the hostnames it covers change:
 FORCE_REGENERATE_CERT=true bash scripts/create_mkcert.sh
 ```
 
+### Container Registry metadata database
+
+New local deployments use the CloudNativePG-backed Container Registry metadata
+database. This enables the current Container Registry tag view and related
+metadata features.
+
+For an existing local registry that already contains images, migrate it once.
+The registry is read-only during the import, so do not push or delete images
+until the command completes:
+
+```bash
+cd $HOME/code/gitlabc
+REGISTRY_METADATA_MIGRATION_CONFIRM=true \
+  bash scripts/migrate_registry_metadata_database.sh
+```
+
+The workflow runs fully inside the Kubernetes cluster and works the same from
+macOS and AlmaLinux hosts, provided the local k3d context and `kubectl` are
+available.
+
 ### Optional Public Let's Encrypt
 
 The public Let's Encrypt profile serves GitLab at:

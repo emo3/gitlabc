@@ -20,6 +20,7 @@ GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-}"
 CERTMANAGER_EMAIL="${CERTMANAGER_EMAIL:-infuse.1301@gmail.com}"
 DEFAULT_VALUES_FILE="${PROJECT_ROOT}/.values/dev-external.values.yaml"
 PUBLIC_LETSENCRYPT_VALUES_FILE="${PROJECT_ROOT}/public-letsencrypt.values.yaml"
+EXTRA_VALUES_FILE="${EXTRA_VALUES_FILE:-}"
 SETUP_DEPENDENCIES="${SETUP_DEPENDENCIES:-true}"
 VALIDATE_DEPENDENCIES="${VALIDATE_DEPENDENCIES:-true}"
 SETUP_LOCAL_TLS="${SETUP_LOCAL_TLS:-true}"
@@ -258,6 +259,10 @@ case "${GITLAB_DEPLOY_PROFILE}" in
     exit 1
     ;;
 esac
+
+if [[ -n "${EXTRA_VALUES_FILE}" ]]; then
+  add_values_file "${EXTRA_VALUES_FILE}"
+fi
 
 if ! helm repo list | awk '{print $1}' | grep -qx "${GITLAB_HELM_REPO_NAME}"; then
   echo "Adding Helm repo '${GITLAB_HELM_REPO_NAME}'..."
