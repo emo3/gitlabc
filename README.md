@@ -39,7 +39,7 @@ Run this from the `gitlabc` directory:
 
 ```bash
 cd $HOME/code/gitlabc
-ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+ansible-playbook -i localhost, --connection=local ansible-install-k8s-tools-gitlab-deps.yml
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
@@ -69,8 +69,8 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 | --- | --- |
 | Check health | `bash scripts/check_status.sh` |
 | Configure k3d registry pulls | `bash scripts/configure_k3d_registry_pull.sh` |
-| Stop without deleting data | `k3d cluster stop gitlab-dev` |
-| Start again | `k3d cluster start gitlab-dev && bash scripts/check_status.sh` |
+| Start and reconcile local GitLab | `bash "$HOME/code/gitlabc/scripts/start_gitlab.sh"` |
+| Stop without deleting data | `bash "$HOME/code/gitlabc/scripts/stop_gitlab.sh"` |
 | Back up GitLab | `bash scripts/backup_gitlab.sh` |
 | Restore GitLab | `bash scripts/restore_gitlab.sh -l` then `bash scripts/restore_gitlab.sh` |
 | Import a GitHub project | `bash scripts/import_github_project.sh -r emo3/my_repo` |
@@ -80,6 +80,12 @@ https://gitlab.127.0.0.1.nip.io/users/sign_in
 `configure_k3d_registry_pull.sh` is for the standalone Kubernetes runner. It
 lets k3d nodes pull `registry.127.0.0.1.nip.io` images directly through the
 local GitLab HTTPS ingress.
+
+`start_gitlab.sh` can be run from any directory. It runs the idempotent Ansible
+bootstrap, reconciles the GitLab Helm deployment, and waits until GitLab is
+healthy. It does not prompt for a sudo password, so the user running it must
+have non-interactive sudo configured for the bootstrap tasks. `stop_gitlab.sh`
+stops the k3d cluster only; it retains GitLab data.
 
 ### Import GitHub projects
 
@@ -157,7 +163,7 @@ The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, insta
 Starting an existing k3d cluster waits up to two minutes by default. Override the timeout with a Go duration such as `30s`, `5m`, or `1h`:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass \
+ansible-playbook -i localhost, --connection=local \
   -e k3d_cluster_start_timeout=5m \
   ansible-install-k8s-tools-gitlab-deps.yml
 ```
@@ -173,7 +179,7 @@ By default, the playbook also makes Docker's container DNS deterministic by merg
 This avoids k3d image pull failures where pods cannot resolve `registry-1.docker.io` from inside the Docker network. Existing Docker daemon settings are preserved, and Docker is restarted only when the daemon config changes. This setting applies to Linux hosts only. To skip this step:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass \
+ansible-playbook -i localhost, --connection=local \
   -e docker_configure_dns=false \
   ansible-install-k8s-tools-gitlab-deps.yml
 ```
@@ -181,7 +187,7 @@ ansible-playbook -i localhost, --connection=local --ask-become-pass \
 To use different DNS servers:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass \
+ansible-playbook -i localhost, --connection=local \
   -e '{"docker_dns_servers":["192.168.86.1","1.1.1.1"]}' \
   ansible-install-k8s-tools-gitlab-deps.yml
 ```
@@ -195,7 +201,7 @@ If you saw an error like:
 it means your command didn’t provide an inventory that matches the playbook’s `hosts: all`. You can run it locally like this:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+ansible-playbook -i localhost, --connection=local ansible-install-k8s-tools-gitlab-deps.yml
 ```
 
 #### Run against other hosts (inventory required)
@@ -354,7 +360,7 @@ default so k3d uses its default supported node image. Pin `k3s_image` only after
 your vulnerability scanner approves a candidate:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass \
+ansible-playbook -i localhost, --connection=local \
   -e k3s_image=rancher/k3s:v1.31.5-k3s1 \
   ansible-install-k8s-tools-gitlab-deps.yml
 ```
@@ -441,7 +447,7 @@ bash scripts/check_status.sh
 After `reset_cluster.sh`, recreate the k3d cluster first, then redeploy:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+ansible-playbook -i localhost, --connection=local ansible-install-k8s-tools-gitlab-deps.yml
 bash scripts/deploy_gitlab.sh
 bash scripts/check_status.sh
 ```
@@ -571,14 +577,13 @@ when the k3d cluster itself remains.
 To stop the local environment without deleting data, stop the k3d cluster:
 
 ```bash
-k3d cluster stop gitlab-dev
+bash "$HOME/code/gitlabc/scripts/stop_gitlab.sh"
 ```
 
 Start it again with:
 
 ```bash
-k3d cluster start gitlab-dev
-bash scripts/check_status.sh
+bash "$HOME/code/gitlabc/scripts/start_gitlab.sh"
 ```
 
 Reset GitLab and the external dependencies, but keep the k3d cluster:
@@ -615,7 +620,7 @@ PRUNE_DOCKER=false bash scripts/reset_cluster.sh
 After `reset_cluster.sh`, recreate the cluster and deploy:
 
 ```bash
-ansible-playbook -i localhost, --connection=local --ask-become-pass ansible-install-k8s-tools-gitlab-deps.yml
+ansible-playbook -i localhost, --connection=local ansible-install-k8s-tools-gitlab-deps.yml
 bash scripts/dev_dependencies.sh setup
 bash scripts/deploy_gitlab.sh
 ```
