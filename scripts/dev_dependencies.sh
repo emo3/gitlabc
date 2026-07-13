@@ -11,6 +11,12 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GITLAB_CHART_ROOT="${GITLAB_CHART_ROOT:-${PROJECT_ROOT}/../gitlab}"
 UPSTREAM_SCRIPT_DIR="${GITLAB_CHART_ROOT}/scripts"
 VALUES_DIR="${PROJECT_ROOT}/.values"
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
 
 for helper in helpers.sh valkey.sh cloudnativepg.sh garage.sh; do
   if [[ ! -f "${UPSTREAM_SCRIPT_DIR}/ci/lib/${helper}" ]]; then
@@ -461,7 +467,7 @@ gitlab:
           key: config
 
 registry:
-  authEndpoint: https://gitlab.127.0.0.1.nip.io
+  authEndpoint: https://gitlab.${GITLAB_DOMAIN}
   storage:
     secret: $(garage_release_name)-gitlab-registry-storage
     key: config

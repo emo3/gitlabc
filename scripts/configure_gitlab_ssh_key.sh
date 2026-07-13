@@ -9,7 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
-GITLAB_HOST="${GITLAB_HOST:-gitlab.127.0.0.1.nip.io}"
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_HOST="${GITLAB_HOST:-gitlab.${GITLAB_DOMAIN}}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
 SSH_PUBLIC_KEY_FILE="${SSH_PUBLIC_KEY_FILE:-${HOME}/.ssh/id_ed25519.pub}"
 SSH_KEY_TITLE="${SSH_KEY_TITLE:-$(hostname -s)-$(basename "${SSH_PUBLIC_KEY_FILE}")}"

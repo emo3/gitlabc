@@ -9,6 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
+# Keep workstation-specific LAN endpoint settings outside version control.
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+
 NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab}"
 GITLAB_DEPLOY_PROFILE="${GITLAB_DEPLOY_PROFILE:-local-mkcert}"

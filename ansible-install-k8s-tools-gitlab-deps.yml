@@ -22,7 +22,7 @@
     create_k3d_cluster: true
     k3d_cluster_name: "gitlab-dev"
     k3d_cluster_start_timeout: "2m"
-    gitlab_domain: "127.0.0.1.nip.io"
+    gitlab_domain: "{{ lookup('ansible.builtin.env', 'GITLAB_DOMAIN') | default('127.0.0.1.nip.io', true) }}"
     k3d_subnet: "172.28.0.0/16"
     k3d_host_gateway_ip: "172.28.0.1"
 

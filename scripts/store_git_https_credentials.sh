@@ -9,7 +9,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
-GITLAB_HOST="${GITLAB_HOST:-gitlab.127.0.0.1.nip.io}"
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_HOST="${GITLAB_HOST:-gitlab.${GITLAB_DOMAIN}}"
 GITLAB_HTTPS_URL="${GITLAB_HTTPS_URL:-https://${GITLAB_HOST}}"
 GLAB_CONFIG_FILE="${GLAB_CONFIG_FILE:-${CODE_ROOT}/.glab-config/glab-cli/config.yml}"
 

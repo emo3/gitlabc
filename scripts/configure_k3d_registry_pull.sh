@@ -6,6 +6,14 @@
 set -eo pipefail
 [[ "${TRACE}" ]] && set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 NAMESPACE="${NAMESPACE:-gitlab}"
