@@ -74,31 +74,25 @@ cp .gitlab.env.example .gitlab.env
 bash scripts/deploy_gitlab.sh
 ```
 
-For example, a host at `192.168.86.50` is available at
-`https://gitlab.192.168.86.50.nip.io/` and via SSH on port `2222`.
+For example, a GitLab service address of `192.168.86.50` is available at
+`https://gitlab.192.168.86.50.nip.io/` and via SSH on port `2222`. Reserve the
+address outside the DHCP pool, or create a DHCP reservation, before assigning
+it to the host.
 `.gitlab.env` is ignored by Git and is read automatically by deployment and
-startup commands. This local profile does not modify the host firewall; if a
-firewall is enabled, its LAN policy must allow TCP ports `443` and `2222`.
+startup commands. If a host firewall is enabled, its LAN policy must allow TCP
+ports `80`, `443`, and `2222`.
 Import the GitLab host's mkcert root CA on every client that should trust its
 HTTPS certificate.
 
 #### macOS host with a dedicated GitLab virtual IP
 
-Docker Desktop on macOS does not expose published container ports through a
-secondary LAN address by itself. For example, when the macOS host is
-`192.168.86.38` and GitLab uses the dedicated address `192.168.86.50`, set
-`GITLAB_EXTERNAL_IP=192.168.86.50` in `.gitlab.env` and run the virtual-IP
-proxy on the macOS host:
-
-```bash
-cd "$HOME/code/gitlabc"
-sudo bash scripts/gitlab_vip_proxy_macos.sh
-```
-
-Keep that command running while testing. It assigns the virtual address and
-forwards its ports `80`, `443`, and `2222` to Docker Desktop's loopback
-listeners. The repository also includes `macos/com.gitlabc.vip-proxy.plist`
-for installing the proxy as a persistent launchd service.
+Docker Desktop on macOS does not reliably expose published container ports on a
+secondary LAN address. A dedicated GitLab address therefore requires a
+host-level redirect from that address to Docker Desktop's published ports, plus
+a persistent macOS interface-alias configuration. This is an advanced network
+configuration: validate it from a different LAN host after every change. Do
+not use `scripts/gitlab_vip_proxy_macos.sh`; it is obsolete and does not
+reliably forward HTTPS.
 
 To trust the local GitLab certificate in Firefox, import the macOS host's
 mkcert CA file in **Settings → Privacy & Security → Certificates → View
@@ -106,18 +100,31 @@ Certificates → Authorities → Import**, and select **Trust this CA to identif
 websites**. Find the exact directory with `mkcert -CAROOT`; import
 `rootCA.pem`, never `rootCA-key.pem`.
 
-After copying that `rootCA.pem` file to a client, verify the endpoint with:
+On Linux clients, install the copied `rootCA.pem` into the operating-system
+trust store before using HTTPS:
 
 ```bash
-curl --cacert /path/to/rootCA.pem -I \
+# Debian/Ubuntu
+sudo install -m 0644 rootCA.pem /usr/local/share/ca-certificates/gitlab-mkcert.crt
+sudo update-ca-certificates
+
+# RHEL/AlmaLinux
+sudo install -m 0644 rootCA.pem /etc/pki/ca-trust/source/anchors/gitlab-mkcert.crt
+sudo update-ca-trust
+```
+
+From a different LAN host, verify both the remote forwarding path and
+certificate trust:
+
+```bash
+curl -Iv \
   https://gitlab.192.168.86.50.nip.io/users/sign_in
 ```
 
-An `HTTP/2 200` response confirms both the virtual-IP proxy and certificate
-trust path work. A TLS connection reset or broken pipe means the virtual-IP
-proxy or its Docker Desktop forwarding target is not serving HTTPS yet; an
-`unable to get local issuer certificate` error means the mkcert CA has not
-been trusted by that client.
+An `HTTP/2 200` response confirms both remote forwarding and certificate trust.
+An `unable to get local issuer certificate` error means the mkcert CA has not
+been trusted by that client. A TLS reset means the host-level forwarding path
+is not serving HTTPS.
 
 ### Common operations
 
@@ -150,9 +157,10 @@ After GitLab is deployed, authenticate `glab` against the local GitLab host
 using the repo-local config directory:
 
 ```bash
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
 XDG_CONFIG_HOME=../.glab-config glab auth login \
-  --hostname gitlab.127.0.0.1.nip.io \
-  --api-host gitlab.127.0.0.1.nip.io \
+  --hostname "gitlab.${GITLAB_DOMAIN}" \
+  --api-host "gitlab.${GITLAB_DOMAIN}" \
   --api-protocol https \
   --git-protocol ssh \
   --web \
@@ -192,13 +200,15 @@ bash scripts/configure_gitlab_ssh_key.sh
 Use SSH remotes for local GitLab:
 
 ```bash
-git remote set-url origin ssh://git@gitlab.127.0.0.1.nip.io:2222/gitlab/project.git
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+git remote set-url origin "ssh://git@gitlab.${GITLAB_DOMAIN}:2222/gitlab/project.git"
 ```
 
 Check SSH access:
 
 ```bash
-ssh -T -p 2222 git@gitlab.127.0.0.1.nip.io
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+ssh -T -p 2222 "git@gitlab.${GITLAB_DOMAIN}"
 ```
 
 The preferred SSH path uses port `2222` because host port `22` normally belongs
@@ -588,8 +598,8 @@ Within the Wi-Fi router gateway configuration layer (192.168.86.1), configure
 static WAN-to-LAN mapping rules:
 
 ```text
-External port 80 TCP  -> internal port 80 on 192.168.86.50
-External port 443 TCP -> internal port 443 on 192.168.86.50
+External port 80 TCP  -> internal port 80 on the configured GitLab service IP
+External port 443 TCP -> internal port 443 on the configured GitLab service IP
 ```
 
 ## Local Scripts
@@ -742,7 +752,8 @@ Use nginx ingress on host port 443. Do not use `kubectl port-forward` or
 For the default local mkcert profile:
 
 ```bash
-curl -I https://gitlab.127.0.0.1.nip.io/users/sign_in
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+curl -I "https://gitlab.${GITLAB_DOMAIN}/users/sign_in"
 ```
 
 For the optional public Let's Encrypt profile:
@@ -753,7 +764,7 @@ curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
 
 Then open the URL for the profile you deployed:
 
-- mkcert local HTTPS: `https://gitlab.127.0.0.1.nip.io/users/sign_in`
+- mkcert local HTTPS: `https://gitlab.${GITLAB_DOMAIN}/users/sign_in`
 - Let's Encrypt public HTTPS: `https://gitlab.edmo3.dynv6.net/users/sign_in`
 
 ## Login
