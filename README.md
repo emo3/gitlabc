@@ -74,8 +74,8 @@ cp .gitlab.env.example .gitlab.env
 bash scripts/deploy_gitlab.sh
 ```
 
-For example, a host at `192.168.86.141` is available at
-`https://gitlab.192.168.86.141.nip.io/` and via SSH on port `2222`.
+For example, a host at `192.168.86.50` is available at
+`https://gitlab.192.168.86.50.nip.io/` and via SSH on port `2222`.
 `.gitlab.env` is ignored by Git and is read automatically by deployment and
 startup commands. This local profile does not modify the host firewall; if a
 firewall is enabled, its LAN policy must allow TCP ports `443` and `2222`.
@@ -101,10 +101,10 @@ lets k3d nodes pull `registry.127.0.0.1.nip.io` images directly through the
 local GitLab HTTPS ingress.
 
 `start_gitlab.sh` can be run from any directory. By default, it idempotently
-starts the existing k3d cluster if needed, reconciles the GitLab Helm
-deployment, and waits until GitLab is healthy; it does not run Ansible or make
-firewall changes. For first-time setup or privileged prerequisite changes only,
-run `BOOTSTRAP=true bash scripts/start_gitlab.sh`. `stop_gitlab.sh` stops the
+reconciles privileged prerequisites, starts or creates the k3d cluster as
+needed, reconciles the GitLab Helm deployment, and waits until GitLab is
+healthy. It may prompt for privilege escalation through Ansible.
+`stop_gitlab.sh` stops the
 k3d cluster only; it retains GitLab data.
 
 ### Import GitHub projects
@@ -551,8 +551,8 @@ Within the Wi-Fi router gateway configuration layer (192.168.86.1), configure
 static WAN-to-LAN mapping rules:
 
 ```text
-External port 80 TCP  -> internal port 80 on 192.168.86.141
-External port 443 TCP -> internal port 443 on 192.168.86.141
+External port 80 TCP  -> internal port 80 on 192.168.86.50
+External port 443 TCP -> internal port 443 on 192.168.86.50
 ```
 
 ## Local Scripts
