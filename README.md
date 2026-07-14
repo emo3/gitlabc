@@ -82,6 +82,43 @@ firewall is enabled, its LAN policy must allow TCP ports `443` and `2222`.
 Import the GitLab host's mkcert root CA on every client that should trust its
 HTTPS certificate.
 
+#### macOS host with a dedicated GitLab virtual IP
+
+Docker Desktop on macOS does not expose published container ports through a
+secondary LAN address by itself. For example, when the macOS host is
+`192.168.86.38` and GitLab uses the dedicated address `192.168.86.50`, set
+`GITLAB_EXTERNAL_IP=192.168.86.50` in `.gitlab.env` and run the virtual-IP
+proxy on the macOS host:
+
+```bash
+cd "$HOME/code/gitlabc"
+sudo bash scripts/gitlab_vip_proxy_macos.sh
+```
+
+Keep that command running while testing. It assigns the virtual address and
+forwards its ports `80`, `443`, and `2222` to Docker Desktop's loopback
+listeners. The repository also includes `macos/com.gitlabc.vip-proxy.plist`
+for installing the proxy as a persistent launchd service.
+
+To trust the local GitLab certificate in Firefox, import the macOS host's
+mkcert CA file in **Settings → Privacy & Security → Certificates → View
+Certificates → Authorities → Import**, and select **Trust this CA to identify
+websites**. Find the exact directory with `mkcert -CAROOT`; import
+`rootCA.pem`, never `rootCA-key.pem`.
+
+After copying that `rootCA.pem` file to a client, verify the endpoint with:
+
+```bash
+curl --cacert /path/to/rootCA.pem -I \
+  https://gitlab.192.168.86.50.nip.io/users/sign_in
+```
+
+An `HTTP/2 200` response confirms both the virtual-IP proxy and certificate
+trust path work. A TLS connection reset or broken pipe means the virtual-IP
+proxy or its Docker Desktop forwarding target is not serving HTTPS yet; an
+`unable to get local issuer certificate` error means the mkcert CA has not
+been trusted by that client.
+
 ### Common operations
 
 | Task | Command |
