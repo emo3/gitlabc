@@ -243,30 +243,39 @@ The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/de
 GITLAB_CHART_VERSION=10.1.1 bash scripts/deploy_gitlab.sh
 ```
 
+Repeat deploys reconcile the release without restarting GitLab workloads. After
+you intentionally replace an external dependency secret, request that restart
+explicitly:
+
+```bash
+RESTART_GITLAB_WORKLOADS=true bash scripts/deploy_gitlab.sh
+```
+
 ### Check latest stable versions
 
 Run the stable-version audit to compare the local pins with current upstream
 stable releases and verify installed local binaries match the pins:
 
 ```bash
-bash scripts/check_latest_stable.sh
+bash scripts/check_latest_stable.sh -r
 ```
 
 Use strict mode for automation. It exits non-zero if a pinned component is no
 longer latest stable:
 
 ```bash
-bash scripts/check_latest_stable.sh -s
+bash scripts/check_latest_stable.sh -s -r
 ```
 
 For a daily "latest stable and still healthy" check, combine the audit with the
 cluster health check:
 
 ```bash
-bash scripts/check_latest_stable.sh -s -H
+bash scripts/check_latest_stable.sh -s -H -r
 ```
 
-That command is safe to run daily because it does not mutate the cluster. Treat
+The audit is read-only by default. `-r` refreshes only local Helm repository
+indexes; it never mutates the cluster. Treat
 drift as a maintenance signal: GitLab chart patch upgrades can usually be
 applied with `scripts/update_gitlab_chart_version.sh -a`, but k3d changes
 require a planned cluster rebuild after a backup.
@@ -293,7 +302,7 @@ crontab -e
 Example entry for 6:15 AM every day:
 
 ```cron
-15 6 * * * cd /Users/emo3/code/gitlabc && bash scripts/check_latest_stable.sh -s -H >> .logs/latest-stable.log 2>&1
+15 6 * * * cd /Users/emo3/code/gitlabc && bash scripts/check_latest_stable.sh -s -H -r >> .logs/latest-stable.log 2>&1
 ```
 
 ### Update GitLab chart version
