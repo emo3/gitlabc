@@ -26,20 +26,20 @@ the bundled nginx ingress.
 Open:
 
 ```text
-https://gitlab.127.0.0.1.nip.io/users/sign_in
+https://gitlab.192.168.86.50.nip.io/users/sign_in
 ```
 
 Verify the host access path with:
 
 ```bash
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 curl -I "https://gitlab.${GITLAB_DOMAIN}/users/sign_in"
 ```
 
 ## Use a LAN address
 
-`127.0.0.1.nip.io` points at the computer using it, so it only works on the
-GitLab host. For other devices, assign the GitLab host a stable LAN address,
+`192.168.86.50.nip.io` resolves to this GitLab host on the local network. For
+other devices, assign the GitLab host a stable LAN address,
 then create the ignored `.gitlab.env` file:
 
 ```bash

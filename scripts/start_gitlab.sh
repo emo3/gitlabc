@@ -14,7 +14,7 @@ if [[ -f "${GITLAB_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${GITLAB_ENV_FILE}"
 fi
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 
 cd "${PROJECT_ROOT}"
 

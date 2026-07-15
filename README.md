@@ -79,7 +79,7 @@ For the complete list of helpers, including one-time migration and maintenance
 commands, see [scripts/README.md](scripts/README.md).
 
 `configure_k3d_registry_pull.sh` is for the standalone Kubernetes runner. It
-lets k3d nodes pull `registry.127.0.0.1.nip.io` images directly through the
+lets k3d nodes pull `registry.192.168.86.50.nip.io` images directly through the
 local GitLab HTTPS ingress.
 
 `start_gitlab.sh` can be run from any directory. By default, it idempotently
@@ -95,7 +95,7 @@ After GitLab is deployed, authenticate `glab` against the local GitLab host
 using the repo-local config directory:
 
 ```bash
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 XDG_CONFIG_HOME=../.glab-config glab auth login \
   --hostname "gitlab.${GITLAB_DOMAIN}" \
   --api-host "gitlab.${GITLAB_DOMAIN}" \
@@ -138,14 +138,14 @@ bash scripts/configure_gitlab_ssh_key.sh
 Use SSH remotes for local GitLab:
 
 ```bash
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 git remote set-url origin "ssh://git@gitlab.${GITLAB_DOMAIN}:2222/gitlab/project.git"
 ```
 
 Check SSH access:
 
 ```bash
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 ssh -T -p 2222 "git@gitlab.${GITLAB_DOMAIN}"
 ```
 
