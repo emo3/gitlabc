@@ -5,9 +5,11 @@
 set -eo pipefail
 [[ "${TRACE}" ]] && set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 GITLAB_RUNNER_CHART_REF="${GITLAB_RUNNER_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab-runner}"
+RUNNER_DEPLOY_SCRIPT="${RUNNER_DEPLOY_SCRIPT:-${SCRIPT_DIR}/../../gitlabr/scripts/deploy_runner.sh}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab-runner}"
 NAMESPACE="${NAMESPACE:-gitlab}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
@@ -36,6 +38,7 @@ Options:
 Environment:
   KUBE_CONTEXT              Kubernetes context (default: k3d-gitlab-dev).
   GITLAB_RUNNER_CHART_REF   Runner chart reference (default: gitlab/gitlab-runner).
+  RUNNER_DEPLOY_SCRIPT      Script containing the pinned runner chart version.
   HELM_TIMEOUT              Upgrade timeout (default: 10m).
 USAGE
 }
@@ -92,6 +95,17 @@ fi
 
 require_command helm
 
+if [[ ! -f "${RUNNER_DEPLOY_SCRIPT}" ]]; then
+  echo "ERROR: Runner deploy script not found at ${RUNNER_DEPLOY_SCRIPT}."
+  exit 1
+fi
+
+PINNED_VERSION="$(sed -nE 's/^RUNNER_CHART_VERSION="\$\{RUNNER_CHART_VERSION:-([^}]+)\}"$/\1/p' "${RUNNER_DEPLOY_SCRIPT}")"
+if [[ -z "${PINNED_VERSION}" ]]; then
+  echo "ERROR: Could not find pinned RUNNER_CHART_VERSION in ${RUNNER_DEPLOY_SCRIPT}."
+  exit 1
+fi
+
 if ! helm repo list | awk '{print $1}' | grep -qx "${GITLAB_HELM_REPO_NAME}"; then
   echo "Adding Helm repo '${GITLAB_HELM_REPO_NAME}'..."
   helm repo add "${GITLAB_HELM_REPO_NAME}" "${GITLAB_HELM_REPO_URL}"
@@ -123,14 +137,17 @@ IFS=. read -r CURRENT_MAJOR CURRENT_MINOR CURRENT_PATCH <<< "${CURRENT_VERSION}"
 IFS=. read -r LATEST_MAJOR LATEST_MINOR LATEST_PATCH <<< "${LATEST_VERSION}"
 
 echo "Current runner chart: ${CURRENT_VERSION} (app ${CURRENT_APP_VERSION:-unknown})"
+echo "Pinned runner chart:   ${PINNED_VERSION}"
 echo "Latest runner chart:  ${LATEST_VERSION} (app ${LATEST_APP_VERSION:-unknown})"
 
-if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" ]]; then
+if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" && "${PINNED_VERSION}" == "${LATEST_VERSION}" ]]; then
   echo "Already up to date."
   exit 0
 fi
 
-if [[ "${CURRENT_MAJOR}" != "${LATEST_MAJOR}" ]]; then
+if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" ]]; then
+  echo "Installed runner is current; only the deployment pin needs updating."
+elif [[ "${CURRENT_MAJOR}" != "${LATEST_MAJOR}" ]]; then
   echo "Upgrade type: major"
   if [[ "${APPLY}" == "true" && "${ALLOW_MAJOR}" != "true" ]]; then
     echo "ERROR: Refusing to apply a major upgrade without -M."
@@ -147,7 +164,25 @@ else
 fi
 
 if [[ "${APPLY}" != "true" ]]; then
-  echo "Run with -a to upgrade '${RELEASE_NAME}' while retaining its current Helm values."
+  echo "Run with -a to update the pin and upgrade '${RELEASE_NAME}' while retaining its current Helm values."
+  exit 0
+fi
+
+TMP_FILE="$(mktemp)"
+awk -v latest="${LATEST_VERSION}" '
+  /^RUNNER_CHART_VERSION="\$\{RUNNER_CHART_VERSION:-[^}]+\}"$/ {
+    print "RUNNER_CHART_VERSION=\"${RUNNER_CHART_VERSION:-" latest "}\""
+    next
+  }
+  { print }
+' "${RUNNER_DEPLOY_SCRIPT}" > "${TMP_FILE}"
+mv "${TMP_FILE}" "${RUNNER_DEPLOY_SCRIPT}"
+chmod +x "${RUNNER_DEPLOY_SCRIPT}"
+
+echo "Updated runner chart pin: ${PINNED_VERSION} -> ${LATEST_VERSION}"
+
+if [[ "${CURRENT_VERSION}" == "${LATEST_VERSION}" ]]; then
+  echo "Runner release was already current."
   exit 0
 fi
 
