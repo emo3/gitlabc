@@ -1,8 +1,9 @@
 # Local GitLab chart notes
 
-Use this profile for local development with k3d. It runs GitLab through the
-bundled nginx ingress with mkcert-trusted HTTPS by default. Let's Encrypt is
-available as an optional public HTTPS profile.
+Use this profile to run GitLab on k3d. Choose one HTTPS guide before deploying:
+
+- [Local HTTPS with mkcert](README-mk.md) — the default, for a workstation or LAN.
+- [Public HTTPS with Let's Encrypt](README-le.md) — for a publicly reachable domain.
 
 ## GitLab Release Cadence
 
@@ -31,23 +32,25 @@ git clone https://gitlab.com/gitlab-org/charts/gitlab.git
 
 ## Ansible playbooks overview
 
-- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm 4, the `helm-git` plugin, k3d, and mkcert; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
+- `ansible-install-k8s-tools-gitlab-deps.yml` — installs Docker, `kubectl`, Helm 4, `glab`, the `helm-git` plugin, k3d, and mkcert; creates the `gitlab-dev` cluster; switches kubeconfig to `k3d-gitlab-dev`; and verifies Kubernetes is reachable.
 
-## Quick start
+## Start here
 
-Run this from the `gitlabc` directory:
+Run the shared prerequisites from the `gitlabc` directory:
 
 ```bash
 cd $HOME/code/gitlabc
 ansible-playbook -i localhost, --connection=local ansible-install-k8s-tools-gitlab-deps.yml
-bash scripts/deploy_gitlab.sh
-bash scripts/check_status.sh
 ```
 
-The Ansible playbook bootstraps local tools and the k3d cluster. The deploy
-script then idempotently sets up external dependencies, validates generated
-secrets, creates the local mkcert TLS secret, deploys GitLab, and disables
-public sign-ups.
+Then follow exactly one deployment guide:
+
+- [Local HTTPS with mkcert](README-mk.md)
+- [Public HTTPS with Let's Encrypt](README-le.md)
+
+The deploy profile defaults to `local-mkcert`. The Let's Encrypt guide stores
+`GITLAB_DEPLOY_PROFILE=public-letsencrypt` in `.gitlab.env`, so shared
+redeployment and recovery commands below retain that choice.
 
 Garage object storage is installed with Kubernetes PVC persistence enabled by
 default. The default Garage PVC sizes are `1Gi` for metadata and `10Gi` for
@@ -56,75 +59,6 @@ data; override them with `GARAGE_META_PERSISTENCE_SIZE` and
 runs only, set `GARAGE_PERSISTENCE_ENABLED=false`. This default applies to new
 Garage installs; an existing Garage release created without persistence must be
 reinstalled or upgraded explicitly before it has persistent object storage.
-
-Open the local mkcert HTTPS URL:
-
-```text
-https://gitlab.127.0.0.1.nip.io/users/sign_in
-```
-
-### Access from another computer on the LAN
-
-`127.0.0.1.nip.io` points at the client itself, so it is only usable on the
-GitLab host. Copy `.gitlab.env.example` to `.gitlab.env`, replace its address
-with the GitLab host's stable LAN IP, then redeploy:
-
-```bash
-cp .gitlab.env.example .gitlab.env
-bash scripts/deploy_gitlab.sh
-```
-
-For example, a GitLab service address of `192.168.86.50` is available at
-`https://gitlab.192.168.86.50.nip.io/` and via SSH on port `2222`. Reserve the
-address outside the DHCP pool, or create a DHCP reservation, before assigning
-it to the host.
-`.gitlab.env` is ignored by Git and is read automatically by deployment and
-startup commands. If a host firewall is enabled, its LAN policy must allow TCP
-ports `80`, `443`, and `2222`.
-Import the GitLab host's mkcert root CA on every client that should trust its
-HTTPS certificate.
-
-#### macOS host with a dedicated GitLab virtual IP
-
-Docker Desktop on macOS does not reliably expose published container ports on a
-secondary LAN address. A dedicated GitLab address therefore requires a
-host-level redirect from that address to Docker Desktop's published ports, plus
-a persistent macOS interface-alias configuration. This is an advanced network
-configuration: validate it from a different LAN host after every change. Do
-not use `scripts/gitlab_vip_proxy_macos.sh`; it is obsolete and does not
-reliably forward HTTPS.
-
-To trust the local GitLab certificate in Firefox, import the macOS host's
-mkcert CA file in **Settings → Privacy & Security → Certificates → View
-Certificates → Authorities → Import**, and select **Trust this CA to identify
-websites**. Find the exact directory with `mkcert -CAROOT`; import
-`rootCA.pem`, never `rootCA-key.pem`.
-
-On Linux clients, install the copied `rootCA.pem` into the operating-system
-trust store before using HTTPS:
-
-```bash
-# Debian/Ubuntu
-sudo install -m 0644 rootCA.pem /usr/local/share/ca-certificates/gitlab-mkcert.crt
-sudo update-ca-certificates
-
-# RHEL/AlmaLinux
-sudo install -m 0644 rootCA.pem /etc/pki/ca-trust/source/anchors/gitlab-mkcert.crt
-sudo update-ca-trust
-```
-
-From a different LAN host, verify both the remote forwarding path and
-certificate trust:
-
-```bash
-curl -Iv \
-  https://gitlab.192.168.86.50.nip.io/users/sign_in
-```
-
-An `HTTP/2 200` response confirms both remote forwarding and certificate trust.
-An `unable to get local issuer certificate` error means the mkcert CA has not
-been trusted by that client. A TLS reset means the host-level forwarding path
-is not serving HTTPS.
 
 ### Common operations
 
@@ -136,9 +70,13 @@ is not serving HTTPS.
 | Stop without deleting data | `bash "$HOME/code/gitlabc/scripts/stop_gitlab.sh"` |
 | Back up GitLab | `bash scripts/backup_gitlab.sh` |
 | Restore GitLab | `bash scripts/restore_gitlab.sh -l` then `bash scripts/restore_gitlab.sh` |
+| Check or update the standalone Runner | `bash scripts/update_gitlab_runner_chart_version.sh` |
 | Import a GitHub project | `bash scripts/import_github_project.sh -r emo3/my_repo` |
 | Create a local user | `bash scripts/create_user.sh -u alice -e alice@example.com -n "Alice Example"` |
 | Destructive local reset | `bash scripts/reset_local.sh` |
+
+For the complete list of helpers, including one-time migration and maintenance
+commands, see [scripts/README.md](scripts/README.md).
 
 `configure_k3d_registry_pull.sh` is for the standalone Kubernetes runner. It
 lets k3d nodes pull `registry.127.0.0.1.nip.io` images directly through the
@@ -279,40 +217,6 @@ Because the playbook uses `hosts: all`, you must provide an inventory where your
 ansible-playbook -i <inventory-file> ansible-install-k8s-tools-gitlab-deps.yml
 ```
 
-### Local HTTPS with mkcert
-
-The default deploy profile is `local-mkcert`. It uses a locally trusted mkcert
-certificate stored in Kubernetes secret `gitlab-local-tls`.
-
-Deploy GitLab with mkcert HTTPS:
-
-```bash
-bash scripts/deploy_gitlab.sh
-bash scripts/check_status.sh
-```
-
-This is equivalent to `GITLAB_DEPLOY_PROFILE=local-mkcert bash scripts/deploy_gitlab.sh`.
-
-The helper installs the mkcert local CA if needed, writes certificate files under
-`.certs/`, and applies a Kubernetes TLS secret named `gitlab-local-tls` in the
-GitLab namespace. The generated certificate covers the default GitLab host, the
-wildcard domain, the base domain, `localhost`, and `127.0.0.1`.
-
-If you change the domain or namespace, pass the same values to both commands:
-
-```bash
-GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab bash scripts/create_mkcert.sh
-GITLAB_DOMAIN=gitlab.localtest.me NAMESPACE=my-gitlab \
-  GITLAB_DEPLOY_PROFILE=local-mkcert \
-  bash scripts/deploy_gitlab.sh
-```
-
-Regenerate the certificate when the hostnames it covers change:
-
-```bash
-FORCE_REGENERATE_CERT=true bash scripts/create_mkcert.sh
-```
-
 ### Container Registry metadata database
 
 New local deployments use the CloudNativePG-backed Container Registry metadata
@@ -332,59 +236,6 @@ REGISTRY_METADATA_MIGRATION_CONFIRM=true \
 The workflow runs fully inside the Kubernetes cluster and works the same from
 macOS and AlmaLinux hosts, provided the local k3d context and `kubectl` are
 available.
-
-### Optional Public Let's Encrypt
-
-The public Let's Encrypt profile serves GitLab at:
-
-```text
-https://gitlab.edmo3.dynv6.net/users/sign_in
-```
-
-Deploy it with:
-
-```bash
-GITLAB_DEPLOY_PROFILE=public-letsencrypt bash scripts/deploy_gitlab.sh
-bash scripts/check_status.sh
-```
-
-The deploy script sets up dependencies by default, then composes the generated
-dependency values at `.values/dev-external.values.yaml` with
-`public-letsencrypt.values.yaml`. The public values file enables HTTPS, GitLab
-ingress, chart-managed cert-manager, the GitLab ACME issuer, and the bundled
-nginx ingress controller.
-
-Before deploying, make sure all public prerequisites are true:
-
-- `gitlab.edmo3.dynv6.net` resolves to your current public IP.
-- The router forwards public TCP ports 80 and 443 to this host.
-- The host firewall allows TCP ports 80 and 443.
-- The k3d cluster was created with `80:80@loadbalancer` and
-  `443:443@loadbalancer` port mappings.
-
-Public access depends on your network. In prior testing, local access and the
-Let's Encrypt certificate worked, external access through alternate port `8443`
-worked, and plain external `443` still depended on router or ISP behavior.
-
-After deploying, check certificate progress:
-
-```bash
-kubectl get issuer,certificate,challenge,order -n gitlab
-kubectl get ingress -n gitlab
-curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
-```
-
-The deploy helper disables the Web IDE single-origin fallback warning by setting
-`vscode_extension_marketplace_single_origin_fallback_enabled=false` for both
-local and public profiles. By default it keeps GitLab's upstream extension host domain,
-`cdn.web-ide.gitlab-static.net`. To use a custom host, provide a wildcard DNS
-and TLS setup first, then deploy with:
-
-```bash
-PUBLIC_WEB_IDE_EXTENSION_HOST_DOMAIN=webide.edmo3.dynv6.net \
-  GITLAB_DEPLOY_PROFILE=public-letsencrypt \
-  bash scripts/deploy_gitlab.sh
-```
 
 The default chart version is controlled by `GITLAB_CHART_VERSION` in `scripts/deploy_gitlab.sh`. Override it when you intentionally want another stable release:
 
@@ -549,82 +400,6 @@ selected archive into the toolbox pod, scales `sidekiq` and `webservice` down,
 runs `backup-utility --restore` with `GITLAB_ASSUME_YES=1`, scales them back up,
 and waits for status.
 
-## Networking & Dynamic DNS Validation
-
-This section is an example public setup for `gitlab.edmo3.dynv6.net`. The
-default local mkcert profile does not require DDNS, public port forwarding, or
-firewall changes.
-
-For public Let's Encrypt validation, public internet traffic on TCP ports 80
-and 443 must reach the host machine, then the k3d load balancer, then the
-bundled nginx ingress controller.
-
-### Dynamic DNS (DDNS) Automation via ddclient
-
-To automatically track and update public IP alterations with `dynv6`, `ddclient` was pulled from the EPEL repository and configured to use external web-based IP detection rather than reporting local interface configurations.
-
-File modified: `/etc/ddclient.conf`
-
-```text
-use=web, web=checkip.dyndns.org
-protocol=dyndns2
-server=dynv6.com
-login=none
-password=<HIDDEN_TOKEN>
-edmo3.dynv6.net
-```
-
-#### Service Persistence
-
-```bash
-sudo rm -f /var/cache/ddclient/ddclient.cache
-sudo systemctl enable --now ddclient
-```
-
-### Open firewall
-
-By default, AlmaLinux 9 ships with firewalld, which drops unexpected ingress
-traffic unless you explicitly allow it.
-
-```bash
-sudo firewall-cmd --permanent --add-port=80/tcp
-sudo firewall-cmd --permanent --add-port=443/tcp
-sudo firewall-cmd --reload
-```
-
-#### Edge Network Port Forwarding
-
-Within the Wi-Fi router gateway configuration layer (192.168.86.1), configure
-static WAN-to-LAN mapping rules:
-
-```text
-External port 80 TCP  -> internal port 80 on the configured GitLab service IP
-External port 443 TCP -> internal port 443 on the configured GitLab service IP
-```
-
-## Local Scripts
-
-| Script | Purpose |
-| --- | --- |
-| `bash scripts/dev_dependencies.sh setup` | Deploys Valkey, CloudNativePG/PostgreSQL, and Garage with PVC persistence enabled, then writes `.values/dev-external.values.yaml`. |
-| `bash scripts/dev_dependencies.sh status` | Shows the status of the external dependencies. |
-| `bash scripts/dev_dependencies.sh teardown` | Removes the external dependencies without removing the GitLab release. |
-| `bash scripts/create_mkcert.sh` | Generates a local mkcert wildcard certificate and applies it as a Kubernetes TLS secret for trusted local HTTPS. |
-| `bash scripts/check_latest_stable.sh` | Checks pinned local tool and chart versions against current upstream stable releases. |
-| `bash scripts/update_gitlab_chart_version.sh` | Checks the latest GitLab Helm chart and optionally updates the pinned chart version in `scripts/deploy_gitlab.sh`. |
-| `bash scripts/deploy_gitlab.sh` | Installs the pinned stable `gitlab/gitlab` chart release and deploys GitLab through nginx ingress. |
-| `bash scripts/check_status.sh` | Waits up to ten minutes for GitLab to become healthy. If it times out, it prints stuck pods, recent events, pod descriptions, and recent logs. |
-| `bash scripts/backup_gitlab.sh` | Runs a toolbox backup and copies the newest backup archive to `.backups/` on the host. |
-| `bash scripts/restore_gitlab.sh` | Restores a selected GitLab backup archive from `.backups/` or another backup directory. |
-| `bash scripts/reset_local.sh` | Destructive: removes GitLab, external dependencies, the `gitlab` namespace, and local generated files, but keeps the k3d cluster. |
-| `bash scripts/reset_cluster.sh` | Destructive: runs the local reset, deletes the `gitlab-dev` k3d cluster, and prunes unused Docker images/cache/volumes. |
-
-Use a longer health-check timeout when needed:
-
-```bash
-TIMEOUT_SECONDS=660 bash scripts/check_status.sh
-```
-
 ## Reset and Start Over
 
 ### Durable state
@@ -743,29 +518,6 @@ kubectl logs -f -n gitlab <pod-name>
 # Example for webservice
 kubectl logs -f -n gitlab gitlab-webservice-xxx
 ```
-
-## Current access path
-
-Use nginx ingress on host port 443. Do not use `kubectl port-forward` or
-`:8080` for browser access.
-
-For the default local mkcert profile:
-
-```bash
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
-curl -I "https://gitlab.${GITLAB_DOMAIN}/users/sign_in"
-```
-
-For the optional public Let's Encrypt profile:
-
-```bash
-curl -I https://gitlab.edmo3.dynv6.net/users/sign_in
-```
-
-Then open the URL for the profile you deployed:
-
-- mkcert local HTTPS: `https://gitlab.${GITLAB_DOMAIN}/users/sign_in`
-- Let's Encrypt public HTTPS: `https://gitlab.edmo3.dynv6.net/users/sign_in`
 
 ## Login
 

@@ -20,6 +20,7 @@ NAMESPACE="${NAMESPACE:-gitlab}"
 RELEASE_NAME="${RELEASE_NAME:-gitlab}"
 GITLAB_DEPLOY_PROFILE="${GITLAB_DEPLOY_PROFILE:-local-mkcert}"
 GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_PUBLIC_DOMAIN="${GITLAB_PUBLIC_DOMAIN:-edmo3.dynv6.net}"
 GITLAB_EXTERNAL_IP="${GITLAB_EXTERNAL_IP:-127.0.0.1}"
 GITLAB_SSH_HOST="${GITLAB_SSH_HOST:-gitlab.${GITLAB_DOMAIN}}"
 GITLAB_SHELL_SSH_PORT="${GITLAB_SHELL_SSH_PORT:-2222}"
@@ -43,7 +44,7 @@ PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED="${PUBLIC_WEB_IDE_SINGLE_ORIGIN_FA
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 GITLAB_CHART_REF="${GITLAB_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab}"
-GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.1.1}"
+GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.1.2}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
@@ -255,10 +256,12 @@ case "${GITLAB_DEPLOY_PROFILE}" in
     add_values_file "${VALUES_FILE:-${DEFAULT_VALUES_FILE}}"
     add_values_file "${PUBLIC_LETSENCRYPT_VALUES_FILE}"
     PROFILE_SET_ARGS=(
+      --set "global.hosts.domain=${GITLAB_PUBLIC_DOMAIN}"
+      --set "certmanager-issuer.email=${CERTMANAGER_EMAIL}"
       --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/ssl-redirect=true"
       --set-string "global.ingress.annotations.nginx\\.ingress\\.kubernetes\\.io/force-ssl-redirect=true"
     )
-    GITLAB_URL="https://gitlab.edmo3.dynv6.net/users/sign_in"
+    GITLAB_URL="https://gitlab.${GITLAB_PUBLIC_DOMAIN}/users/sign_in"
     ;;
   *)
     echo "ERROR: Unknown GITLAB_DEPLOY_PROFILE '${GITLAB_DEPLOY_PROFILE}'."
