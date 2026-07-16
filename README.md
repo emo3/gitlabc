@@ -165,6 +165,40 @@ The playbook `ansible-install-k8s-tools-gitlab-deps.yml` installs Docker, `kubec
 
 The playbook supports Linux hosts such as AlmaLinux 9 and macOS. On macOS, install Docker Desktop before running the playbook; the playbook starts Docker Desktop when needed and waits for it to become reachable. Docker Engine installation and daemon DNS configuration are Linux-only.
 
+#### AlmaLinux 9 host setup
+
+Install Ansible before running the playbook; the playbook installs the GitLab
+runtime dependencies, but not Ansible itself:
+
+```bash
+sudo dnf install -y ansible-core
+```
+
+Place this repository and the upstream GitLab chart checkout next to each other
+on the server, as shown in [Expected Directory Layout](#expected-directory-layout).
+Copy `.gitlab.env.example` to `.gitlab.env` and replace all three endpoint
+values with the server's stable LAN address (or use the public-domain settings
+in [Public HTTPS with Let's Encrypt](README-le.md)). For LAN access, allow the
+published GitLab ports through firewalld:
+
+```bash
+sudo firewall-cmd --permanent --add-port=80/tcp
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --permanent --add-port=2222/tcp
+sudo firewall-cmd --reload
+```
+
+Then run the standard local command from `gitlabc`:
+
+```bash
+ansible-playbook -i localhost, --connection=local \
+  ansible-install-k8s-tools-gitlab-deps.yml
+```
+
+The playbook adds the invoking user to the `docker` group. Sign out and back
+in before using Docker directly without `sudo`; cluster creation in the
+playbook itself uses a fresh privileged session when necessary.
+
 Starting an existing k3d cluster waits up to two minutes by default. Override the timeout with a Go duration such as `30s`, `5m`, or `1h`:
 
 ```bash
@@ -356,6 +390,33 @@ bash scripts/backup_gitlab.sh -d "$HOME/gitlab-backups"
 The copied archive and Rails secrets are outside the k3d cluster and outside
 Garage. Keep at least one known-good backup directory outside this repository
 before any major maintenance.
+
+### Move GitLab to another host
+
+To move this deployment (for example, from macOS to an AlmaLinux 9 server), do
+not copy k3d or Docker volumes. Create a GitLab backup on the old host, copy
+the complete backup directory to the new host, and restore it into a newly
+deployed instance running the same GitLab chart/application version.
+
+On the old host:
+
+```bash
+mkdir -p "$HOME/gitlab-transfer"
+bash scripts/backup_gitlab.sh -d "$HOME/gitlab-transfer"
+```
+
+Copy that directory securely to the new host. On the new host, first complete
+the AlmaLinux setup above, set `.gitlab.env` for its endpoint, create the k3d
+cluster, and deploy GitLab once. Then restore the copied backup directory:
+
+```bash
+bash scripts/restore_gitlab.sh -d "$HOME/gitlab-transfer"
+bash scripts/check_status.sh
+```
+
+The backup directory contains both the GitLab backup archive and Rails secrets;
+keep it private. If the hostname changes, redeploy using the new `.gitlab.env`
+before restoring, then update Git remotes and reauthenticate `glab` clients.
 
 ### Restore GitLab
 
