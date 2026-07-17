@@ -52,6 +52,28 @@ See [scripts/README.md](scripts/README.md) for all helpers.
 Restoring overwrites GitLab data. After reviewing the available backups, run
 `bash scripts/restore_gitlab.sh` to restore the newest one.
 
+## Runner offline
+
+The GitLab Runner is a separate Helm release managed by the sibling `gitlabr`
+repository; it is not installed by this GitLab chart. GitLab can therefore
+retain a runner record while its Kubernetes release is absent, causing the
+runner to appear offline.
+
+Check and recover the runner with:
+
+```bash
+cd "$HOME/code/gitlabr"
+bash scripts/recover_runner.sh
+bash scripts/check_runner.sh -s
+```
+
+If the runner release was intentionally removed, redeploy it with
+`bash scripts/deploy_runner.sh`. Do not use `reset_runner.sh` for recovery; it
+uninstalls the runner release. After restoring GitLab from a backup, the saved
+runner authentication token may also need to be reset. See the
+[GitLab Runner recovery instructions](../gitlabr/README.md#after-restoring-gitlab-kis)
+for the token-reset procedure and required local credential files.
+
 ## Login
 
 Sign in as `root`. Get the initial password with:
