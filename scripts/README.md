@@ -30,4 +30,22 @@ the repository root, for example: `bash scripts/check_status.sh`.
 - Use `bash scripts/<script>.sh -h` when a script supports help.
 - Take a backup before `reset_local.sh`, `reset_cluster.sh`, or the Registry metadata migration.
 - `reset_cluster.sh` is destructive; with its default settings it also removes unused Docker resources.
-- `gitlab-vip.sh` is intentionally a single-active-host tool. Run `deactivate` on the old host before `activate` on the new one, and restore GitLab data separately.
+
+## Move the LAN address
+
+`gitlab-vip.sh` moves the configured LAN address between AlmaLinux and macOS.
+Run GitLab on only one host at a time:
+
+```bash
+# Old host
+bash scripts/stop_gitlab.sh
+bash scripts/gitlab-vip.sh deactivate
+
+# New host
+bash scripts/start_gitlab.sh
+bash scripts/restore_gitlab.sh
+bash scripts/gitlab-vip.sh activate
+```
+
+The helper manages only the address. Move GitLab data separately with
+`backup_gitlab.sh` and `restore_gitlab.sh`.
