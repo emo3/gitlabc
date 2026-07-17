@@ -83,6 +83,7 @@ bash scripts/reset_cluster.sh
 
 Set `PRUNE_DOCKER=false` when running `reset_cluster.sh` to skip Docker pruning.
 
-To move GitLab between hosts, use the backup/restore helpers; do not copy k3d
-or Docker volumes. See the `gitlab-vip.sh` notes in
-[scripts/README.md](scripts/README.md#move-the-lan-address).
+To recover GitLab on another host, use the backup/restore helpers; do not copy
+k3d or Docker volumes. The primary AlmaLinux host uses a permanent secondary
+LAN address for its stable GitLab endpoint; see
+[scripts/README.md](scripts/README.md#stable-lan-endpoint).

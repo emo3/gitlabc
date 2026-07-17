@@ -14,7 +14,6 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `create_user.sh` | Create or reset a GitLab user without sending email. |
 | `deploy_gitlab.sh` | Install or upgrade the GitLab Helm release. |
 | `dev_dependencies.sh` | Set up or tear down GitLab's local supporting dependencies. |
-| `gitlab-vip.sh` | Move the GitLab virtual LAN IP between AlmaLinux and macOS. |
 | `import_github_project.sh` | Import a GitHub repository into a local GitLab group. |
 | `migrate_registry_metadata_database.sh` | One-time migration of Registry metadata from object storage to PostgreSQL. |
 | `reset_cluster.sh` | Remove GitLab and the entire k3d cluster; it may also prune Docker data. |
@@ -31,29 +30,12 @@ the repository root, for example: `bash scripts/check_status.sh`.
 - Take a backup before `reset_local.sh`, `reset_cluster.sh`, or the Registry metadata migration.
 - `reset_cluster.sh` is destructive; with its default settings it also removes unused Docker resources.
 
-## Move the LAN address
+## Stable LAN endpoint
 
-`gitlab-vip.sh` moves the configured LAN address between AlmaLinux and macOS.
-It checks for an existing owner before activation. After GitLab is started on
-the replacement host, `verify` checks the GitLab HTTPS endpoint through the
-VIP and sends a gratuitous ARP announcement to update LAN neighbors.
-Run GitLab on only one host at a time:
+Run GitLab on AlmaLinux with the configured `GITLAB_EXTERNAL_IP` as a
+permanent secondary address on its NetworkManager connection. Reserve that
+address in DHCP. This keeps the GitLab URL stable without a host-to-host VIP
+handoff mechanism.
 
-```bash
-# Old host
-bash scripts/stop_gitlab.sh
-bash scripts/gitlab-vip.sh deactivate
-
-# New host
-bash scripts/gitlab-vip.sh activate
-
-# Restore GitLab data if needed, then start it on the replacement host.
-bash scripts/restore_gitlab.sh
-bash scripts/start_gitlab.sh
-
-# Verify HTTPS and SSH through the VIP, then announce the move to the LAN.
-bash scripts/gitlab-vip.sh verify
-```
-
-The helper manages only the address. Move GitLab data separately with
-`backup_gitlab.sh` and `restore_gitlab.sh`.
+Use `backup_gitlab.sh` and `restore_gitlab.sh` to recover GitLab on a separate
+host; that recovery host uses its own LAN address.
