@@ -66,6 +66,7 @@ reinstalled or upgraded explicitly before it has persistent object storage.
 | --- | --- |
 | Check health | `bash scripts/check_status.sh` |
 | Configure k3d registry pulls | `bash scripts/configure_k3d_registry_pull.sh` |
+| Activate/deactivate the GitLab LAN IP on this host | `bash scripts/gitlab-vip.sh activate` / `bash scripts/gitlab-vip.sh deactivate` |
 | Start and reconcile local GitLab | `bash "$HOME/code/gitlabc/scripts/start_gitlab.sh"` |
 | Stop without deleting data | `bash "$HOME/code/gitlabc/scripts/stop_gitlab.sh"` |
 | Back up GitLab | `bash scripts/backup_gitlab.sh` |
@@ -88,6 +89,27 @@ needed, reconciles the GitLab Helm deployment, and waits until GitLab is
 healthy. It may prompt for privilege escalation through Ansible.
 `stop_gitlab.sh` stops the
 k3d cluster only; it retains GitLab data.
+
+### Move GitLab between AlmaLinux and macOS
+
+For the `gitlab.192.168.86.50.nip.io` endpoint, run GitLab on only one host at
+a time. The helper assigns or removes the configured `GITLAB_EXTERNAL_IP` on
+the current host, and refuses activation if another device answers for it:
+
+```bash
+# On the old active host
+bash scripts/stop_gitlab.sh
+bash scripts/gitlab-vip.sh deactivate
+
+# On the replacement host, after restoring its GitLab backup
+bash scripts/gitlab-vip.sh activate
+bash scripts/start_gitlab.sh
+```
+
+The macOS address change is temporary and must be repeated after a reboot or
+Wi-Fi reconnect. On AlmaLinux it is persisted in the active NetworkManager
+connection. Reserve the IP for the active host in the router when possible,
+and never activate it on both machines.
 
 ### Import GitHub projects
 

@@ -14,6 +14,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `create_user.sh` | Create or reset a GitLab user without sending email. |
 | `deploy_gitlab.sh` | Install or upgrade the GitLab Helm release. |
 | `dev_dependencies.sh` | Set up or tear down GitLab's local supporting dependencies. |
+| `gitlab-vip.sh` | Move the GitLab virtual LAN IP between AlmaLinux and macOS. |
 | `import_github_project.sh` | Import a GitHub repository into a local GitLab group. |
 | `migrate_registry_metadata_database.sh` | One-time migration of Registry metadata from object storage to PostgreSQL. |
 | `reset_cluster.sh` | Remove GitLab and the entire k3d cluster; it may also prune Docker data. |
@@ -29,3 +30,4 @@ the repository root, for example: `bash scripts/check_status.sh`.
 - Use `bash scripts/<script>.sh -h` when a script supports help.
 - Take a backup before `reset_local.sh`, `reset_cluster.sh`, or the Registry metadata migration.
 - `reset_cluster.sh` is destructive; with its default settings it also removes unused Docker resources.
+- `gitlab-vip.sh` is intentionally a single-active-host tool. Run `deactivate` on the old host before `activate` on the new one, and restore GitLab data separately.
