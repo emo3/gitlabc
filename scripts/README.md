@@ -34,6 +34,9 @@ the repository root, for example: `bash scripts/check_status.sh`.
 ## Move the LAN address
 
 `gitlab-vip.sh` moves the configured LAN address between AlmaLinux and macOS.
+It checks for an existing owner before activation. After GitLab is started on
+the replacement host, `verify` checks the GitLab HTTPS endpoint through the
+VIP and sends a gratuitous ARP announcement to update LAN neighbors.
 Run GitLab on only one host at a time:
 
 ```bash
@@ -42,9 +45,14 @@ bash scripts/stop_gitlab.sh
 bash scripts/gitlab-vip.sh deactivate
 
 # New host
-bash scripts/start_gitlab.sh
-bash scripts/restore_gitlab.sh
 bash scripts/gitlab-vip.sh activate
+
+# Restore GitLab data if needed, then start it on the replacement host.
+bash scripts/restore_gitlab.sh
+bash scripts/start_gitlab.sh
+
+# Verify HTTPS and SSH through the VIP, then announce the move to the LAN.
+bash scripts/gitlab-vip.sh verify
 ```
 
 The helper manages only the address. Move GitLab data separately with
