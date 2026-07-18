@@ -15,5 +15,6 @@ scripts/debug/chart-info
 .claude/settings.local.json
 .values
 .certs
+.gitlab.env
 .chart
 .backups

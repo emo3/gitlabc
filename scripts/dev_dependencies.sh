@@ -11,6 +11,12 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 GITLAB_CHART_ROOT="${GITLAB_CHART_ROOT:-${PROJECT_ROOT}/../gitlab}"
 UPSTREAM_SCRIPT_DIR="${GITLAB_CHART_ROOT}/scripts"
 VALUES_DIR="${PROJECT_ROOT}/.values"
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 
 for helper in helpers.sh valkey.sh cloudnativepg.sh garage.sh; do
   if [[ ! -f "${UPSTREAM_SCRIPT_DIR}/ci/lib/${helper}" ]]; then
@@ -54,10 +60,15 @@ function valkey_auth_secret_has_password() {
 }
 
 function ensure_valkey_auth_secret_is_usable() {
-  if kubectl get secret "$(valkey_auth_secret)" -n "${NAMESPACE}" > /dev/null 2>&1 \
-      && ! valkey_auth_secret_has_password; then
+  if ! kubectl get secret "$(valkey_auth_secret)" -n "${NAMESPACE}" > /dev/null 2>&1; then
+    VALKEY_AUTH_SECRET_CHANGED=true
+    return
+  fi
+
+  if ! valkey_auth_secret_has_password; then
     echo "Valkey auth secret '$(valkey_auth_secret)' has an empty password. Recreating it."
     kubectl delete secret -n "${NAMESPACE}" "$(valkey_auth_secret)"
+    VALKEY_AUTH_SECRET_CHANGED=true
   fi
 }
 
@@ -172,7 +183,9 @@ function deploy_local_valkey() {
   ensure_helm_repo valkey https://valkey.io/valkey-helm/
   ensure_valkey_auth_secret_is_usable
   deploy_external_valkey
-  restart_valkey_for_current_secret
+  if [[ "${VALKEY_AUTH_SECRET_CHANGED}" == "true" ]]; then
+    restart_valkey_for_current_secret
+  fi
 }
 
 function restart_valkey_for_current_secret() {
@@ -370,6 +383,7 @@ CNPG_CLUSTER_READY_TIMEOUT="${CNPG_CLUSTER_READY_TIMEOUT:-600s}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 KUBECTL_CONTEXT_ARGS=(--context "${KUBE_CONTEXT}")
+VALKEY_AUTH_SECRET_CHANGED=false
 
 GENERATED_VALUES="${VALUES_DIR}/dev-external.values.yaml"
 
@@ -461,7 +475,7 @@ gitlab:
           key: config
 
 registry:
-  authEndpoint: https://gitlab.127.0.0.1.nip.io
+  authEndpoint: https://gitlab.${GITLAB_DOMAIN}
   storage:
     secret: $(garage_release_name)-gitlab-registry-storage
     key: config

@@ -12,26 +12,26 @@ DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-${PROJECT_ROOT}/scripts/deploy_gitlab.sh}"
 
 STRICT=false
 RUN_HEALTH=false
-UPDATE_HELM_REPOS=true
+UPDATE_HELM_REPOS=false
 
 function usage() {
   cat <<'USAGE'
-Usage: bash scripts/check_latest_stable.sh [-s] [-H] [-n]
+Usage: bash scripts/check_latest_stable.sh [-s] [-H] [-r]
 
 Checks local version pins against current stable upstream releases.
 
 Options:
   -s  Exit non-zero when a local pin is not latest stable.
   -H  Run scripts/check_status.sh after the version check.
-  -n  Use the existing local Helm repository indexes.
+  -r  Refresh local Helm repository indexes before checking chart versions.
   -h  Show this help.
 
 Daily audit example:
-  bash scripts/check_latest_stable.sh -s -H
+  bash scripts/check_latest_stable.sh -s -H -r
 USAGE
 }
 
-while getopts ":sHnh" opt; do
+while getopts ":sHrh" opt; do
   case "${opt}" in
     s)
       STRICT=true
@@ -39,8 +39,8 @@ while getopts ":sHnh" opt; do
     H)
       RUN_HEALTH=true
       ;;
-    n)
-      UPDATE_HELM_REPOS=false
+    r)
+      UPDATE_HELM_REPOS=true
       ;;
     h)
       usage
@@ -116,13 +116,21 @@ function ensure_helm_repo() {
 function latest_chart() {
   local chart="$1"
 
-  helm search repo "${chart}" --versions | awk 'NR == 2 { print $2 }'
+  { helm search repo "${chart}" --versions 2>/dev/null || true; } | awk 'NR == 2 { print $2 }'
 }
 
 function latest_chart_app() {
   local chart="$1"
 
-  helm search repo "${chart}" --versions | awk 'NR == 2 { print $3 }'
+  { helm search repo "${chart}" --versions 2>/dev/null || true; } | awk 'NR == 2 { print $3 }'
+}
+
+function chart_app_version() {
+  local chart="$1"
+  local chart_version="$2"
+
+  { helm search repo "${chart}" --versions 2>/dev/null || true; } \
+    | awk -v chart_version="${chart_version}" 'NR > 1 && $2 == chart_version { print $3; exit }'
 }
 
 function strip_v() {
@@ -227,6 +235,10 @@ VALKEY_CHART_LATEST="$(latest_chart valkey/valkey)"
 VALKEY_APP_LATEST="$(latest_chart_app valkey/valkey)"
 CNPG_CHART_LATEST="$(latest_chart cnpg/cloudnative-pg)"
 CNPG_APP_LATEST="$(latest_chart_app cnpg/cloudnative-pg)"
+VALKEY_CHART_CURRENT="${VALKEY_CHART_VERSION:-${VALKEY_CHART_LATEST}}"
+CNPG_CHART_CURRENT="${CNPG_CHART_VERSION:-${CNPG_CHART_LATEST}}"
+VALKEY_APP_CURRENT="$(chart_app_version valkey/valkey "${VALKEY_CHART_CURRENT}")"
+CNPG_APP_CURRENT="$(chart_app_version cnpg/cloudnative-pg "${CNPG_CHART_CURRENT}")"
 
 printf '%-24s %-24s %-24s %-8s %s\n' "Component" "Current" "Latest stable" "Status" "Note"
 printf '%-24s %-24s %-24s %-8s %s\n' "---------" "-------" "-------------" "------" "----"
@@ -241,10 +253,10 @@ else
 fi
 add_result mkcert "${MKCERT_CURRENT}" "${MKCERT_LATEST}"
 add_result "GitLab chart" "${GITLAB_CHART_CURRENT}" "${GITLAB_CHART_LATEST}" "app ${GITLAB_APP_LATEST}"
-add_result "Valkey chart" "${VALKEY_CHART_LATEST}" "${VALKEY_CHART_LATEST}" "tracks latest unless VALKEY_CHART_VERSION is set"
-add_result "Valkey app" "${VALKEY_APP_LATEST}" "${VALKEY_APP_LATEST}" "tracks chart default"
-add_result "CNPG chart" "${CNPG_CHART_LATEST}" "${CNPG_CHART_LATEST}" "tracks latest unless CNPG_CHART_VERSION is set"
-add_result "CNPG app" "${CNPG_APP_LATEST}" "${CNPG_APP_LATEST}" "tracks chart default"
+add_result "Valkey chart" "${VALKEY_CHART_CURRENT}" "${VALKEY_CHART_LATEST}" "set VALKEY_CHART_VERSION to audit an explicit pin"
+add_result "Valkey app" "${VALKEY_APP_CURRENT}" "${VALKEY_APP_LATEST}" "from selected Valkey chart"
+add_result "CNPG chart" "${CNPG_CHART_CURRENT}" "${CNPG_CHART_LATEST}" "set CNPG_CHART_VERSION to audit an explicit pin"
+add_result "CNPG app" "${CNPG_APP_CURRENT}" "${CNPG_APP_LATEST}" "from selected CNPG chart"
 add_result Garage "${GARAGE_CURRENT}" "${GARAGE_CURRENT}" "pinned by app release"
 add_result PostgreSQL "${POSTGRES_CURRENT}" "${POSTGRES_CURRENT}" "do not auto-bump without GitLab support check"
 

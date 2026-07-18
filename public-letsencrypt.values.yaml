@@ -1,6 +1,5 @@
 global:
   hosts:
-    domain: edmo3.dynv6.net
     https: true
 
   ingress:
@@ -11,9 +10,6 @@ global:
 
 # Install the chart-managed cert-manager dependency for ACME HTTP-01.
 installCertmanager: true
-
-certmanager-issuer:
-  email: infuse.1301@gmail.com
 
 nginx-ingress:
   enabled: true

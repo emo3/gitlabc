@@ -9,8 +9,16 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Keep direct certificate regeneration aligned with the machine-local GitLab
+# endpoint configuration used by deployment and k3d registry setup.
+GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
+if [[ -f "${GITLAB_ENV_FILE}" ]]; then
+  # shellcheck disable=SC1090
+  source "${GITLAB_ENV_FILE}"
+fi
+
 NAMESPACE="${NAMESPACE:-gitlab}"
-GITLAB_DOMAIN="${GITLAB_DOMAIN:-127.0.0.1.nip.io}"
+GITLAB_DOMAIN="${GITLAB_DOMAIN:-192.168.86.50.nip.io}"
 GITLAB_HOST="${GITLAB_HOST:-gitlab.${GITLAB_DOMAIN}}"
 GITLAB_TLS_SECRET="${GITLAB_TLS_SECRET:-gitlab-local-tls}"
 CERT_DIR="${CERT_DIR:-${PROJECT_ROOT}/.certs}"
