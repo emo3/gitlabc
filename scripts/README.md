@@ -6,7 +6,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | Script | Purpose |
 | --- | --- |
 | `backup_gitlab.sh` | Create a GitLab backup and copy it, with Rails secrets, to the host. |
-| `check_latest_stable.sh` | Compare local version pins with current stable upstream releases. |
+| `check_latest_stable.sh` | Compare local version pins, including the sibling Runner chart pin when present, with current stable upstream releases. |
 | `check_status.sh` | Wait for GitLab to be healthy and print diagnostics on timeout. |
 | `configure_gitlab_ssh_key.sh` | Add the local SSH public key to the local GitLab account. |
 | `configure_k3d_registry_pull.sh` | Allow k3d nodes to pull from the local GitLab Container Registry. |
@@ -22,12 +22,14 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `restore_gitlab.sh` | Restore a GitLab backup archive into the local deployment. |
 | `start_gitlab.sh` | Reconcile prerequisites, deploy GitLab, and wait for it to become healthy. |
 | `stop_gitlab.sh` | Stop the k3d cluster while retaining GitLab data. |
-| `update_gitlab_chart_version.sh` | Check for, and optionally apply, an update to the pinned GitLab Helm chart. |
-| `update_gitlab_runner_chart_version.sh` | Check the standalone Runner release and optionally upgrade it with its current values. |
 
 ## Notes
 
 - Use `bash scripts/<script>.sh -h` when a script supports help.
+- Use `check_latest_stable.sh -a -r -H` to update drifting pins and rerun the
+  relevant idempotent Ansible/deploy workflows. Its Ansible step does not create
+  or start k3d; use `start_gitlab.sh` when cluster lifecycle management is wanted.
+  Use `-s` without `-a` for an audit that requires manual review before changes.
 - `check_status.sh`, `start_gitlab.sh`, `stop_gitlab.sh`, and the reset,
   deploy, certificate, and configuration helpers take their settings from
   environment variables rather than command-line arguments.
