@@ -11,6 +11,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `configure_gitlab_ssh_key.sh` | Add the local SSH public key to the local GitLab account. |
 | `configure_k3d_registry_pull.sh` | Allow k3d nodes to pull from the local GitLab Container Registry. |
 | `create_mkcert.sh` | Create and install a locally trusted TLS wildcard certificate for GitLab. |
+| `docker_cleanup_safe.sh` | Prune only dangling images and build cache; can install a daily systemd timer. |
 | `create_user.sh` | Create or reset a GitLab user without sending email. |
 | `deploy_gitlab.sh` | Install or upgrade the GitLab Helm release. |
 | `dev_dependencies.sh` | Set up or tear down GitLab's local supporting dependencies. |
@@ -27,8 +28,34 @@ the repository root, for example: `bash scripts/check_status.sh`.
 ## Notes
 
 - Use `bash scripts/<script>.sh -h` when a script supports help.
+- `check_status.sh`, `start_gitlab.sh`, `stop_gitlab.sh`, and the reset,
+  deploy, certificate, and configuration helpers take their settings from
+  environment variables rather than command-line arguments.
 - Take a backup before `reset_local.sh`, `reset_cluster.sh`, or the Registry metadata migration.
 - `reset_cluster.sh` is destructive; with its default settings it also removes unused Docker resources.
+- Run `bash scripts/docker_cleanup_safe.sh` once to install its idempotent daily per-user systemd timer. Later runs skip installation when that timer is enabled and active. The timer reclaims Docker space without deleting k3d/GitLab data and reports usage before and after cleanup.
+
+## Common operations
+
+```bash
+# Back up (saves the archive and Rails secrets in .backups/)
+bash scripts/backup_gitlab.sh
+
+# List or restore backups; restoring overwrites current GitLab data
+bash scripts/restore_gitlab.sh -l
+bash scripts/restore_gitlab.sh
+
+# Run safe Docker cleanup now (never removes containers, volumes, or networks)
+DOCKER_CLEANUP_RUN=true bash scripts/docker_cleanup_safe.sh
+
+# One-time Registry migration; do not push/delete images until it completes
+REGISTRY_METADATA_MIGRATION_CONFIRM=true \
+  bash scripts/migrate_registry_metadata_database.sh
+```
+
+Keep the backup archive and Rails secrets together; both are needed to restore.
+Use `TIMEOUT_SECONDS=<seconds>` to extend `check_status.sh` beyond its
+720-second default.
 
 ## Stable LAN endpoint
 

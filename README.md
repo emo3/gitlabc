@@ -46,6 +46,7 @@ Run these commands from `gitlabc`:
 | Check health | `bash scripts/check_status.sh` |
 | Back up | `bash scripts/backup_gitlab.sh` |
 | List backups | `bash scripts/restore_gitlab.sh -l` |
+| Install daily safe Docker cleanup | `bash scripts/docker_cleanup_safe.sh` |
 
 See [scripts/README.md](scripts/README.md) for all helpers.
 
