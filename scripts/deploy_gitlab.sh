@@ -9,11 +9,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CODE_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
 
+# Version pins are tracked independently from machine-local endpoint settings.
+GITLAB_CHART_VERSION_OVERRIDE="${GITLAB_CHART_VERSION-}"
+GITLAB_CHART_VERSION_WAS_SET=false
+if [[ -v GITLAB_CHART_VERSION ]]; then
+  GITLAB_CHART_VERSION_WAS_SET=true
+fi
+GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE:-${PROJECT_ROOT}/.gitlab-versions.env}"
+if [[ ! -f "${GITLAB_VERSIONS_FILE}" ]]; then
+  echo "ERROR: GitLab versions file not found at ${GITLAB_VERSIONS_FILE}."
+  exit 1
+fi
+# shellcheck disable=SC1090
+source "${GITLAB_VERSIONS_FILE}"
+
 # Keep workstation-specific LAN endpoint settings outside version control.
 GITLAB_ENV_FILE="${GITLAB_ENV_FILE:-${PROJECT_ROOT}/.gitlab.env}"
 if [[ -f "${GITLAB_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${GITLAB_ENV_FILE}"
+fi
+if [[ "${GITLAB_CHART_VERSION_WAS_SET}" == "true" ]]; then
+  GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION_OVERRIDE}"
 fi
 
 NAMESPACE="${NAMESPACE:-gitlab}"
@@ -46,7 +63,7 @@ PUBLIC_WEB_IDE_SINGLE_ORIGIN_FALLBACK_ENABLED="${PUBLIC_WEB_IDE_SINGLE_ORIGIN_FA
 GITLAB_HELM_REPO_NAME="${GITLAB_HELM_REPO_NAME:-gitlab}"
 GITLAB_HELM_REPO_URL="${GITLAB_HELM_REPO_URL:-https://charts.gitlab.io/}"
 GITLAB_CHART_REF="${GITLAB_CHART_REF:-${GITLAB_HELM_REPO_NAME}/gitlab}"
-GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:-10.2.1}"
+GITLAB_CHART_VERSION="${GITLAB_CHART_VERSION:?ERROR: Set GITLAB_CHART_VERSION in ${GITLAB_VERSIONS_FILE} or the environment.}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"

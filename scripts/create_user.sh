@@ -162,6 +162,10 @@ user ||= User.new(username: username)
 
 user.email = email
 user.name = name
+# GitLab requires every human user to own a personal namespace. The normal
+# Users::BuildService does this before saving; this runner creates users
+# directly, so mirror that initialization after setting the namespace name.
+user.assign_personal_namespace(Organizations::Organization.default_organization)
 user.password = password
 user.password_confirmation = password
 user.admin = true if admin

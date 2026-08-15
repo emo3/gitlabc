@@ -19,7 +19,7 @@ GITLAB_HOST="${GITLAB_HOST:-gitlab.${GITLAB_DOMAIN}}"
 GITLAB_GROUP="${GITLAB_GROUP:-netcool}"
 GITLAB_VISIBILITY="${GITLAB_VISIBILITY:-internal}"
 GITHUB_OWNER="${GITHUB_OWNER:-emo3}"
-XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}"
+GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR:-${XDG_CONFIG_HOME:-${CODE_ROOT}/.glab-config}/glab-cli}"
 TMP_ROOT="${TMP_ROOT:-${TMPDIR:-/tmp}}"
 DESCRIPTION=""
 DEFAULT_BRANCH=""
@@ -50,7 +50,7 @@ Environment:
   GITLAB_GROUP      GitLab group/namespace (default: netcool)
   GITLAB_VISIBILITY Project visibility (default: internal)
   GITHUB_OWNER      Owner used when SOURCE is only a project name (default: emo3)
-  XDG_CONFIG_HOME   glab config directory (default: ../.glab-config from this repo)
+  GLAB_CONFIG_DIR   glab config directory (default: ../.glab-config/glab-cli from this repo)
   TMP_ROOT          Temporary mirror root (default: TMPDIR or /tmp)
 
 Examples:
@@ -76,6 +76,15 @@ function require_command() {
 
   if ! command -v "${name}" >/dev/null 2>&1; then
     echo "ERROR: ${name} is required."
+    exit 1
+  fi
+}
+
+function verify_glab_auth() {
+  if ! GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
+    glab api user >/dev/null 2>&1; then
+    echo "ERROR: Could not authenticate to GitLab host '${GITLAB_HOST}'." >&2
+    echo "Run: GLAB_CONFIG_DIR='${GLAB_CONFIG_DIR}' glab auth login --hostname '${GITLAB_HOST}'" >&2
     exit 1
   fi
 }
@@ -146,7 +155,7 @@ function detect_default_branch() {
 }
 
 function project_exists() {
-  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+  GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
     glab repo view "${GITLAB_HOST}/${GITLAB_GROUP}/${PROJECT_NAME}" >/dev/null 2>&1
 }
 
@@ -179,7 +188,7 @@ function create_or_update_project() {
   else
     echo "Creating GitLab project: ${project_path}"
     namespace_id="$(
-      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+      GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
         glab api "$(group_api_path)" \
         | jq -r '.id // empty'
     )"
@@ -189,7 +198,7 @@ function create_or_update_project() {
       exit 1
     fi
 
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api projects \
         -X POST \
         -f "name=${PROJECT_NAME}" \
@@ -201,19 +210,19 @@ function create_or_update_project() {
   fi
 
   current_visibility="$(
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api "$(project_api_path)" \
       | jq -r '.visibility // empty'
   )"
   current_description="$(
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api "$(project_api_path)" \
       | jq -r '.description // empty'
   )"
 
   if [[ "${current_visibility}" != "${GITLAB_VISIBILITY}" || "${current_description}" != "${DESCRIPTION}" ]]; then
     echo "Updating GitLab project settings..."
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api "$(project_api_path)" \
         -X PUT \
         -f "visibility=${GITLAB_VISIBILITY}" \
@@ -226,14 +235,14 @@ function update_default_branch() {
   local current_default_branch
 
   current_default_branch="$(
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api "$(project_api_path)" \
       | jq -r '.default_branch // empty'
   )"
 
   if [[ "${current_default_branch}" != "${DEFAULT_BRANCH}" ]]; then
     echo "Updating default branch to ${DEFAULT_BRANCH}..."
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" GITLAB_HOST="${GITLAB_HOST}" \
+    GLAB_CONFIG_DIR="${GLAB_CONFIG_DIR}" GITLAB_HOST="${GITLAB_HOST}" \
       glab api "$(project_api_path)" \
         -X PUT \
         -f "default_branch=${DEFAULT_BRANCH}" >/dev/null
@@ -353,6 +362,7 @@ fi
 require_command git
 require_command glab
 require_command jq
+verify_glab_auth
 validate_visibility
 normalize_source "${SOURCE_REPO}"
 

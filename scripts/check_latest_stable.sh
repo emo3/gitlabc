@@ -10,6 +10,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-${PROJECT_ROOT}/ansible-install-k8s-tools-gitlab-deps.yml}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-${PROJECT_ROOT}/scripts/deploy_gitlab.sh}"
 RUNNER_DEPLOY_SCRIPT="${RUNNER_DEPLOY_SCRIPT:-${PROJECT_ROOT}/../gitlabr/scripts/deploy_runner.sh}"
+GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE:-${PROJECT_ROOT}/.gitlab-versions.env}"
+RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE:-${PROJECT_ROOT}/../gitlabr/.runner-versions.env}"
 
 STRICT=false
 RUN_HEALTH=false
@@ -90,11 +92,11 @@ function yaml_var() {
   sed -nE "s/^[[:space:]]+${name}: \"([^\"]+)\"$/\1/p" "${ANSIBLE_PLAYBOOK}" | head -1
 }
 
-function shell_default_var() {
+function env_file_var() {
   local name="$1"
   local file="$2"
 
-  sed -nE "s/^${name}=\"\\\$\\{${name}:-([^}]+)\\}\"$/\1/p" "${file}" | head -1
+  sed -nE "s/^${name}=([^#[:space:]]+)[[:space:]]*(#.*)?$/\1/p" "${file}" | head -1
 }
 
 function github_latest_tag() {
@@ -219,7 +221,7 @@ function update_yaml_var() {
   mv "${tmp_file}" "${file}"
 }
 
-function update_shell_default_var() {
+function update_env_file_var() {
   local name="$1"
   local latest="$2"
   local file="$3"
@@ -227,14 +229,13 @@ function update_shell_default_var() {
 
   tmp_file="$(mktemp)"
   awk -v name="${name}" -v latest="${latest}" '
-    index($0, name "=\"${" name ":-") == 1 {
-      print name "=\"${" name ":-" latest "}\""
+    $0 ~ "^" name "=" {
+      print name "=" latest
       next
     }
     { print }
   ' "${file}" > "${tmp_file}"
   mv "${tmp_file}" "${file}"
-  chmod +x "${file}"
 }
 
 require_command curl
@@ -247,6 +248,11 @@ fi
 
 if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
   echo "ERROR: Deploy script not found at ${DEPLOY_SCRIPT}."
+  exit 1
+fi
+
+if [[ ! -f "${GITLAB_VERSIONS_FILE}" ]]; then
+  echo "ERROR: GitLab versions file not found at ${GITLAB_VERSIONS_FILE}."
   exit 1
 fi
 
@@ -273,10 +279,14 @@ else
   K3S_CURRENT="${K3S_DEFAULT:-k3d default}"
 fi
 MKCERT_CURRENT="$(yaml_var mkcert_version)"
-GITLAB_CHART_CURRENT="$(shell_default_var GITLAB_CHART_VERSION "${DEPLOY_SCRIPT}")"
+GITLAB_CHART_CURRENT="$(env_file_var GITLAB_CHART_VERSION "${GITLAB_VERSIONS_FILE}")"
 RUNNER_CHART_CURRENT=""
 if [[ -f "${RUNNER_DEPLOY_SCRIPT}" ]]; then
-  RUNNER_CHART_CURRENT="$(shell_default_var RUNNER_CHART_VERSION "${RUNNER_DEPLOY_SCRIPT}")"
+  if [[ ! -f "${RUNNER_VERSIONS_FILE}" ]]; then
+    echo "ERROR: Runner versions file not found at ${RUNNER_VERSIONS_FILE}."
+    exit 1
+  fi
+  RUNNER_CHART_CURRENT="$(env_file_var RUNNER_CHART_VERSION "${RUNNER_VERSIONS_FILE}")"
 fi
 GARAGE_CURRENT="$(sed -nE 's/^GARAGE_APP_VERSION="\$\{GARAGE_APP_VERSION:-([^}]+)\}"$/\1/p' "${PROJECT_ROOT}/scripts/dev_dependencies.sh" | head -1)"
 POSTGRES_CURRENT="$(sed -nE 's/^CNPG_POSTGRESQL_TAG="\$\{CNPG_POSTGRESQL_TAG:-([^}]+)\}"$/\1/p' "${PROJECT_ROOT}/scripts/dev_dependencies.sh" | head -1)"
@@ -362,11 +372,11 @@ if [[ "${APPLY}" == "true" ]]; then
     TOOLS_CHANGED=true
   fi
   if versions_differ "${GITLAB_CHART_CURRENT}" "${GITLAB_CHART_LATEST}"; then
-    update_shell_default_var GITLAB_CHART_VERSION "${GITLAB_CHART_LATEST}" "${DEPLOY_SCRIPT}"
+    update_env_file_var GITLAB_CHART_VERSION "${GITLAB_CHART_LATEST}" "${GITLAB_VERSIONS_FILE}"
     GITLAB_CHART_CHANGED=true
   fi
   if [[ -n "${RUNNER_CHART_CURRENT}" ]] && versions_differ "${RUNNER_CHART_CURRENT}" "${RUNNER_CHART_LATEST}"; then
-    update_shell_default_var RUNNER_CHART_VERSION "${RUNNER_CHART_LATEST}" "${RUNNER_DEPLOY_SCRIPT}"
+    update_env_file_var RUNNER_CHART_VERSION "${RUNNER_CHART_LATEST}" "${RUNNER_VERSIONS_FILE}"
     RUNNER_CHART_CHANGED=true
   fi
 
@@ -413,6 +423,6 @@ if [[ "${STRICT}" == "true" && "${APPLY}" != "true" && "${DRIFT_COUNT}" -ne 0 ]]
   printf '  - %s\n' "${DRIFTED_COMPONENTS[@]}"
   echo ""
   echo "Next: review each release's compatibility notes, update its pin, then rerun its deploy script."
-  echo "For GitLab and Runner charts, update GITLAB_CHART_VERSION or RUNNER_CHART_VERSION in the relevant deploy script."
+  echo "For GitLab and Runner charts, update the pin in .gitlab-versions.env or .runner-versions.env."
   exit 2
 fi
