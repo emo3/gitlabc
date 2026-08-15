@@ -25,6 +25,7 @@ DESCRIPTION=""
 DEFAULT_BRANCH=""
 KEEP_MIRROR="false"
 SOURCE_REPO=""
+GITHUB_AUTH_HEADER=""
 GITHUB_REPO_NAME=""
 PROJECT_NAME=""
 PROJECT_CHANGED="false"
@@ -50,6 +51,7 @@ Environment:
   GITLAB_GROUP      GitLab group/namespace (default: netcool)
   GITLAB_VISIBILITY Project visibility (default: internal)
   GITHUB_OWNER      Owner used when SOURCE is only a project name (default: emo3)
+  GITHUB_TOKEN      GitHub token for private repositories (or use GH_TOKEN)
   GLAB_CONFIG_DIR   glab config directory (default: ../.glab-config/glab-cli from this repo)
   TMP_ROOT          Temporary mirror root (default: TMPDIR or /tmp)
 
@@ -132,6 +134,26 @@ function normalize_source() {
   SOURCE_REPO="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO_NAME}.git"
 }
 
+function configure_github_auth() {
+  local token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+
+  if [[ -z "${token}" ]] && command -v gh >/dev/null 2>&1; then
+    token="$(gh auth token 2>/dev/null || true)"
+  fi
+
+  if [[ -n "${token}" ]]; then
+    GITHUB_AUTH_HEADER="Authorization: Bearer ${token}"
+  fi
+}
+
+function github_git() {
+  if [[ -n "${GITHUB_AUTH_HEADER}" ]]; then
+    git -c "http.https://github.com/.extraheader=${GITHUB_AUTH_HEADER}" "$@"
+  else
+    git "$@"
+  fi
+}
+
 function detect_default_branch() {
   local symref
   local master_ref
@@ -140,13 +162,13 @@ function detect_default_branch() {
     return 0
   fi
 
-  symref="$(git ls-remote --symref "${SOURCE_REPO}" HEAD 2>/dev/null | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2; exit }')"
+  symref="$(github_git ls-remote --symref "${SOURCE_REPO}" HEAD 2>/dev/null | awk '/^ref:/ { sub("refs/heads/", "", $2); print $2; exit }')"
   if [[ -n "${symref}" ]]; then
     DEFAULT_BRANCH="${symref}"
     return 0
   fi
 
-  master_ref="$(git ls-remote --heads "${SOURCE_REPO}" master 2>/dev/null)"
+  master_ref="$(github_git ls-remote --heads "${SOURCE_REPO}" master 2>/dev/null)"
   if [[ -n "${master_ref}" ]]; then
     DEFAULT_BRANCH="master"
   else
@@ -253,7 +275,11 @@ function update_default_branch() {
 function refs_snapshot() {
   local repo="$1"
 
-  git ls-remote "${repo}" 'refs/heads/*' 'refs/tags/*' \
+  if [[ "${repo}" == "${SOURCE_REPO}" ]]; then
+    github_git ls-remote "${repo}" 'refs/heads/*' 'refs/tags/*'
+  else
+    git ls-remote "${repo}" 'refs/heads/*' 'refs/tags/*'
+  fi \
     | awk '$2 !~ /\^\{\}$/ { print $1 "\t" $2 }' \
     | sort
 }
@@ -295,7 +321,12 @@ function import_refs() {
   trap cleanup EXIT
 
   echo "Cloning mirror from ${SOURCE_REPO}"
-  git clone --mirror "${SOURCE_REPO}" "${mirror_dir}"
+  if ! github_git clone --mirror "${SOURCE_REPO}" "${mirror_dir}"; then
+    if [[ -z "${GITHUB_AUTH_HEADER}" ]]; then
+      echo "ERROR: Could not read GitHub repository. For a private repository, set GITHUB_TOKEN (or GH_TOKEN) to a token with repository read access, or authenticate with gh." >&2
+    fi
+    exit 1
+  fi
 
   echo "Pushing branches and tags to ${target_repo}"
   git --git-dir="${mirror_dir}" push "${target_repo}" \
@@ -365,6 +396,7 @@ require_command jq
 verify_glab_auth
 validate_visibility
 normalize_source "${SOURCE_REPO}"
+configure_github_auth
 
 if [[ -z "${DESCRIPTION}" ]]; then
   DESCRIPTION="Mirror of https://github.com/${GITHUB_OWNER}/${PROJECT_NAME}"
