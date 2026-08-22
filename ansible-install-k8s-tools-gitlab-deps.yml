@@ -5,9 +5,9 @@
   gather_facts: true
 
   vars:
-    kubectl_version: "v1.36.3"
+    kubectl_version: "v1.36.4"
     helm_version: "v4.2.4"
-    glab_version: "1.113.0"
+    glab_version: "1.114.0"
     helm_git_plugin_url: "https://github.com/aslafy-z/helm-git"
     k3d_version: "5.9.0"
     k3s_image: ""
