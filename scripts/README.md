@@ -8,6 +8,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `backup_gitlab.sh` | Create a GitLab backup and copy it, with Rails secrets, to the host. |
 | `check_latest_stable.sh` | Compare local version pins, including the sibling Runner chart pin when present, with current stable upstream releases. |
 | `check_status.sh` | Wait for GitLab to be healthy and print diagnostics on timeout. |
+| `configure_gitlab_lan_ip.sh` | Safely add the configured GitLab LAN address as a persistent NetworkManager secondary address. |
 | `configure_gitlab_ssh_key.sh` | Add the local SSH public key to the local GitLab account. |
 | `configure_k3d_registry_pull.sh` | Allow k3d nodes to pull from the local GitLab Container Registry. |
 | `create_mkcert.sh` | Create and install a locally trusted TLS wildcard certificate for GitLab. |
@@ -65,6 +66,12 @@ Run GitLab on AlmaLinux with the configured `GITLAB_EXTERNAL_IP` as a
 permanent secondary address on its NetworkManager connection. Reserve that
 address in DHCP. This keeps the GitLab URL stable without a host-to-host VIP
 handoff mechanism.
+
+After reserving the address, run `bash scripts/configure_gitlab_lan_ip.sh`.
+It detects the default-route device and its active NetworkManager connection,
+checks the address is unused before first assignment, and is safe to rerun.
+Set `GITLAB_LAN_DEVICE`, `GITLAB_LAN_CONNECTION`, or `GITLAB_LAN_PREFIX` when
+the automatic choices are not appropriate.
 
 Use `backup_gitlab.sh` and `restore_gitlab.sh` to recover GitLab on a separate
 host; that recovery host uses its own LAN address.

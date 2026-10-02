@@ -21,34 +21,19 @@ GITLAB_SSH_HOST=gitlab.192.168.86.50.nip.io
 ```
 
 Reserve the address in DHCP. On AlmaLinux, make it a permanent secondary
-address on the active NetworkManager connection. First find the active
-connection and device:
+address on the active NetworkManager connection:
 
 ```bash
-nmcli connection show --active
+bash scripts/configure_gitlab_lan_ip.sh
 ```
 
-Confirm that the address is unused before assigning it. Replace the device if
-it is not `enp10s0`:
+The helper detects the default-route device and connection, confirms that the
+address is unused before initially assigning it, and can be rerun safely. If
+needed, override its choices with `GITLAB_LAN_DEVICE`,
+`GITLAB_LAN_CONNECTION`, and `GITLAB_LAN_PREFIX`; see
+`bash scripts/configure_gitlab_lan_ip.sh --help`.
 
-```bash
-sudo arping -D -c 3 -I enp10s0 192.168.86.50
-```
-
-`arping` must receive no replies. If another device replies, stop and choose a
-different address. Then replace the connection name and device below with the
-values reported by `nmcli`:
-
-```bash
-sudo nmcli connection modify "Wired connection 2" \
-  +ipv4.addresses 192.168.86.50/24
-sudo nmcli device reapply enp10s0
-ip -brief address show enp10s0
-```
-
-The final command should show the GitLab address in addition to the host's
-primary address. Allow LAN TCP ports `80`, `443`, and `2222` in the host
-firewall:
+Allow LAN TCP ports `80`, `443`, and `2222` in the host firewall:
 
 ```bash
 sudo firewall-cmd --permanent --add-service=http

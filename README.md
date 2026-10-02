@@ -68,18 +68,13 @@ when that is intended.
    `GITLAB_DOMAIN`, `GITLAB_EXTERNAL_IP`, and `GITLAB_SSH_HOST` to that
    address. For the local HTTPS profile, also reserve the address in DHCP and
    make it a permanent secondary address on the active AlmaLinux NetworkManager
-   connection. Confirm that it is unused first, then replace the connection
-   name, device, address, and prefix below as appropriate for the LAN:
+   connection. Confirm that it is unused first:
 
    ```bash
-   nmcli connection show --active
-   sudo arping -D -c 3 -I <device> <gitlab-external-ip>
-   sudo nmcli connection modify "<connection-name>" \
-     +ipv4.addresses <gitlab-external-ip>/<prefix>
-   sudo nmcli device reapply <device>
+   bash scripts/configure_gitlab_lan_ip.sh
    ```
 
-   `arping` must receive no replies before the address is assigned. Open the
+   The helper performs the ARP check before a new address is assigned. Open the
    host firewall ports as well:
 
    ```bash
