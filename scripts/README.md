@@ -86,24 +86,27 @@ primary host is `almalinxo` (`192.168.86.80`) and the standby is `almalt`
 
 The helper auto-detects the host from its hostname (`almalinxo` or `almalt`)
 or its management address (`192.168.86.80` or `192.168.86.141`) and records
-the role SSH settings in `.gitlab.env`. Set up key-based SSH from `almalt` to
-`192.168.86.80` and passwordless `sudo` for the NetworkManager/IP commands on
-both machines. Then, from `almalt`, promote the standby:
+the role SSH settings in `.gitlab.env`. Set up key-based SSH in both
+directions and passwordless `sudo` for the NetworkManager/IP commands on both
+machines. Run `promote` on either host to make that host active:
 
 ```bash
 bash scripts/switch_gitlab_role.sh promote
 ```
 
-It stops GitLab and removes the shared endpoint from `almalinxo` before
-claiming that address and starting GitLab on `almalt`. It refuses to promote
-when it cannot fence the primary, preventing split-brain. After promotion,
-`almalt` is active and `almalinxo` is standby. This is a manual failover; it
-does not replicate GitLab data, so restore a recent backup on the standby
-before promoting if it is not current.
+It stops GitLab and removes the shared endpoint from the peer before claiming
+that address and starting GitLab locally. It refuses to promote when it cannot
+fence the peer, preventing split-brain. This is a manual failover; it does not
+replicate GitLab data, so restore a recent backup before promoting if it is
+not current.
 
-Run the script with no arguments to make the current detected host standby;
-it prompts before stopping GitLab and releasing the shared endpoint:
+Both actions are idempotent. If the local host already has the requested role
+and its peer has the opposite role, the script makes no changes. Otherwise it
+automatically repairs the two-host state; it never prompts for confirmation.
+
+Run the script with `standby` (or no arguments) to make the current detected
+host standby. It immediately stops GitLab and releases the shared endpoint:
 
 ```bash
-bash scripts/switch_gitlab_role.sh
+bash scripts/switch_gitlab_role.sh standby
 ```

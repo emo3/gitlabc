@@ -20,24 +20,26 @@ GITLAB_LAN_PREFIX="${GITLAB_LAN_PREFIX:-24}"
 GITLAB_PRIMARY_HOST="${GITLAB_PRIMARY_HOST:-almalinxo}"
 GITLAB_STANDBY_HOST="${GITLAB_STANDBY_HOST:-almalt}"
 GITLAB_PRIMARY_SSH="${GITLAB_PRIMARY_SSH:-192.168.86.80}"
-GITLAB_PRIMARY_PROJECT_ROOT="${GITLAB_PRIMARY_PROJECT_ROOT:-${PROJECT_ROOT}}"
+GITLAB_STANDBY_SSH="${GITLAB_STANDBY_SSH:-192.168.86.141}"
+GITLAB_PEER_PROJECT_ROOT="${GITLAB_PEER_PROJECT_ROOT:-${PROJECT_ROOT}}"
+GITLAB_ENSURE_PEER_ACTIVE="${GITLAB_ENSURE_PEER_ACTIVE:-true}"
 GITLAB_LAN_DEVICE="${GITLAB_LAN_DEVICE:-}"
 GITLAB_LAN_CONNECTION="${GITLAB_LAN_CONNECTION:-}"
 K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/switch_gitlab_role.sh [standby] [--yes]
-       bash scripts/switch_gitlab_role.sh promote [--yes]
+Usage: bash scripts/switch_gitlab_role.sh [standby]
+       bash scripts/switch_gitlab_role.sh promote
 
 With no arguments (or `standby`), this host stops GitLab and releases the
-shared endpoint, making it standby. Run `promote` on the standby host to SSH
-to the primary, fence it, claim the endpoint locally, and start GitLab.
+shared endpoint, making it standby. Run `promote` on either host to fence the
+other host, claim the endpoint locally, and start GitLab.
 
 Defaults: primary almalinxo (192.168.86.80); standby almalt (192.168.86.141).
-Required: passwordless sudo for nmcli/ip on both hosts and key-based SSH from
-the standby to GITLAB_PRIMARY_SSH. Both hosts need this repository and a
-matching .gitlab.env containing the shared GITLAB_EXTERNAL_IP.
+Required: passwordless sudo for nmcli/ip on both hosts and key-based SSH in
+both directions. Both hosts need this repository and a matching .gitlab.env
+containing the shared GITLAB_EXTERNAL_IP.
 EOF
 }
 
@@ -63,7 +65,7 @@ persist_role_settings() {
   local setting
   mkdir -p "$(dirname "${GITLAB_ENV_FILE}")"
   touch "${GITLAB_ENV_FILE}"
-  for setting in GITLAB_PRIMARY_HOST GITLAB_STANDBY_HOST GITLAB_PRIMARY_SSH; do
+  for setting in GITLAB_PRIMARY_HOST GITLAB_STANDBY_HOST GITLAB_PRIMARY_SSH GITLAB_STANDBY_SSH; do
     sed -i "/^${setting}=/d" "${GITLAB_ENV_FILE}"
   done
   {
@@ -72,6 +74,7 @@ persist_role_settings() {
     echo "GITLAB_PRIMARY_HOST=${GITLAB_PRIMARY_HOST}"
     echo "GITLAB_STANDBY_HOST=${GITLAB_STANDBY_HOST}"
     echo "GITLAB_PRIMARY_SSH=${GITLAB_PRIMARY_SSH}"
+    echo "GITLAB_STANDBY_SSH=${GITLAB_STANDBY_SSH}"
   } >> "${GITLAB_ENV_FILE}"
 }
 
@@ -80,13 +83,6 @@ require_tool() {
     echo "ERROR: $1 is required but not installed." >&2
     exit 1
   }
-}
-
-confirm() {
-  [[ "${ASSUME_YES}" == true ]] && return
-  local requested_action="$1"
-  read -r -p "Type '${requested_action}' to continue: " answer
-  [[ "${answer}" == "${requested_action}" ]] || { echo "No changes made."; exit 0; }
 }
 
 find_network_settings() {
@@ -104,11 +100,42 @@ find_network_settings() {
   }
 }
 
+local_host_is_active() {
+  ip -o -4 address show | awk '{print $4}' | cut -d/ -f1 | grep -Fqx "${GITLAB_EXTERNAL_IP}" \
+    && k3d cluster get "${K3D_CLUSTER_NAME}" >/dev/null 2>&1
+}
+
+peer_host_is_active() {
+  local peer_ssh="$1"
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${peer_ssh}" \
+    "ip -o -4 address show | awk '{print \$4}' | cut -d/ -f1 | grep -Fqx '${GITLAB_EXTERNAL_IP}' && k3d cluster get '${K3D_CLUSTER_NAME}' >/dev/null 2>&1"
+}
+
+peer_details() {
+  local local_role
+  local_role="$(local_host_role)"
+  if [[ "${local_role}" == primary ]]; then
+    PEER_HOST="${GITLAB_STANDBY_HOST}"
+    PEER_SSH="${GITLAB_STANDBY_SSH}"
+  else
+    PEER_HOST="${GITLAB_PRIMARY_HOST}"
+    PEER_SSH="${GITLAB_PRIMARY_SSH}"
+  fi
+}
+
 make_standby() {
-  local role
+  local role peer_host peer_ssh
   role="$(local_host_role)"
+  peer_details
+  peer_host="${PEER_HOST}"
+  peer_ssh="${PEER_SSH}"
+  require_tool ssh
+  require_tool ip
+  if ! local_host_is_active && peer_host_is_active "${peer_ssh}"; then
+    echo "Already standby: ${peer_host} is active and $(hostname -s) is inactive."
+    return
+  fi
   find_network_settings
-  confirm standby
   echo "Making ${role} host $(hostname -s) standby; stopping GitLab cluster '${K3D_CLUSTER_NAME}'..."
   if k3d cluster get "${K3D_CLUSTER_NAME}" >/dev/null 2>&1; then
     k3d cluster stop "${K3D_CLUSTER_NAME}"
@@ -126,33 +153,40 @@ make_standby() {
     exit 1
   fi
   echo "Host is standby: GitLab stopped and ${GITLAB_EXTERNAL_IP} released."
+  if [[ "${GITLAB_ENSURE_PEER_ACTIVE}" != true ]]; then
+    return
+  fi
+  echo "Ensuring peer ${peer_host} is active..."
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${peer_ssh}" \
+    "GITLAB_EXTERNAL_IP='${GITLAB_EXTERNAL_IP}' GITLAB_LAN_PREFIX='${GITLAB_LAN_PREFIX}' GITLAB_PRIMARY_HOST='${GITLAB_PRIMARY_HOST}' GITLAB_STANDBY_HOST='${GITLAB_STANDBY_HOST}' GITLAB_PRIMARY_SSH='${GITLAB_PRIMARY_SSH}' GITLAB_STANDBY_SSH='${GITLAB_STANDBY_SSH}' K3D_CLUSTER_NAME='${K3D_CLUSTER_NAME}' bash '${GITLAB_PEER_PROJECT_ROOT}/scripts/switch_gitlab_role.sh' promote"
 }
 
 promote() {
-  [[ "$(local_host_role)" == standby ]] || {
-    echo "ERROR: promote must run on standby '${GITLAB_STANDBY_HOST}'." >&2
-    exit 1
-  }
+  local peer_host peer_ssh
+  peer_details
+  peer_host="${PEER_HOST}"
+  peer_ssh="${PEER_SSH}"
   require_tool ssh
   require_tool ip
+  if local_host_is_active && ! peer_host_is_active "${peer_ssh}"; then
+    echo "Already active: $(hostname -s) is active and ${peer_host} is standby."
+    return
+  fi
   if ip -o -4 address show | awk '{print $4}' | cut -d/ -f1 | grep -Fqx "${GITLAB_EXTERNAL_IP}"; then
     echo "ERROR: ${GITLAB_EXTERNAL_IP} is already assigned locally; refusing a potentially split-brain promotion." >&2
     exit 1
   fi
-  confirm promote
-  echo "Fencing primary ${GITLAB_PRIMARY_HOST} through ${GITLAB_PRIMARY_SSH}..."
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "${GITLAB_PRIMARY_SSH}" \
-    "GITLAB_EXTERNAL_IP='${GITLAB_EXTERNAL_IP}' GITLAB_LAN_PREFIX='${GITLAB_LAN_PREFIX}' GITLAB_PRIMARY_HOST='${GITLAB_PRIMARY_HOST}' GITLAB_STANDBY_HOST='${GITLAB_STANDBY_HOST}' K3D_CLUSTER_NAME='${K3D_CLUSTER_NAME}' bash '${GITLAB_PRIMARY_PROJECT_ROOT}/scripts/switch_gitlab_role.sh' standby --yes"
-  echo "Claiming ${GITLAB_EXTERNAL_IP} on standby ${GITLAB_STANDBY_HOST}..."
+  echo "Fencing peer ${peer_host} through ${peer_ssh}..."
+  ssh -o BatchMode=yes -o ConnectTimeout=10 "${peer_ssh}" \
+    "GITLAB_EXTERNAL_IP='${GITLAB_EXTERNAL_IP}' GITLAB_LAN_PREFIX='${GITLAB_LAN_PREFIX}' GITLAB_PRIMARY_HOST='${GITLAB_PRIMARY_HOST}' GITLAB_STANDBY_HOST='${GITLAB_STANDBY_HOST}' GITLAB_PRIMARY_SSH='${GITLAB_PRIMARY_SSH}' GITLAB_STANDBY_SSH='${GITLAB_STANDBY_SSH}' K3D_CLUSTER_NAME='${K3D_CLUSTER_NAME}' GITLAB_ENSURE_PEER_ACTIVE=false bash '${GITLAB_PEER_PROJECT_ROOT}/scripts/switch_gitlab_role.sh' standby"
+  echo "Claiming ${GITLAB_EXTERNAL_IP} on $(hostname -s)..."
   GITLAB_LAN_DEVICE="${GITLAB_LAN_DEVICE}" GITLAB_LAN_CONNECTION="${GITLAB_LAN_CONNECTION}" GITLAB_LAN_PREFIX="${GITLAB_LAN_PREFIX}" GITLAB_EXTERNAL_IP="${GITLAB_EXTERNAL_IP}" bash "${SCRIPT_DIR}/configure_gitlab_lan_ip.sh"
-  echo "Starting GitLab on standby ${GITLAB_STANDBY_HOST}..."
+  echo "Starting GitLab on $(hostname -s)..."
   bash "${SCRIPT_DIR}/start_gitlab.sh"
-  echo "Promotion complete: ${GITLAB_STANDBY_HOST} is active; ${GITLAB_PRIMARY_HOST} is standby."
+  echo "Promotion complete: $(hostname -s) is active; ${peer_host} is standby."
 }
 
 ACTION="${1:-standby}"
-ASSUME_YES=false
-[[ "${2:-}" == --yes ]] && ASSUME_YES=true
 case "${ACTION}" in
   promote) persist_role_settings; promote ;;
   standby) persist_role_settings; make_standby ;;
