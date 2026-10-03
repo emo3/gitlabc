@@ -23,6 +23,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `restore_gitlab.sh` | Restore a GitLab backup archive into the local deployment. |
 | `start_gitlab.sh` | Reconcile prerequisites, deploy GitLab, and wait for it to become healthy. |
 | `stop_gitlab.sh` | Stop the k3d cluster while retaining GitLab data. |
+| `switch_gitlab_role.sh` | Safely promote `almalt` after fencing `almalinxo` and handing off the shared LAN endpoint. |
 
 ## Notes
 
@@ -75,3 +76,34 @@ the automatic choices are not appropriate.
 
 Use `backup_gitlab.sh` and `restore_gitlab.sh` to recover GitLab on a separate
 host; that recovery host uses its own LAN address.
+
+## Primary/standby handoff
+
+The configured `GITLAB_EXTERNAL_IP` is the shared GitLab endpoint. The
+primary host is `almalinxo` (`192.168.86.80`) and the standby is `almalt`
+(`192.168.86.141`). Both hosts must have the same GitLab repository and
+`.gitlab.env`; add the role settings from `.gitlab.env.example` on both.
+
+The helper auto-detects the host from its hostname (`almalinxo` or `almalt`)
+or its management address (`192.168.86.80` or `192.168.86.141`) and records
+the role SSH settings in `.gitlab.env`. Set up key-based SSH from `almalt` to
+`192.168.86.80` and passwordless `sudo` for the NetworkManager/IP commands on
+both machines. Then, from `almalt`, promote the standby:
+
+```bash
+bash scripts/switch_gitlab_role.sh promote
+```
+
+It stops GitLab and removes the shared endpoint from `almalinxo` before
+claiming that address and starting GitLab on `almalt`. It refuses to promote
+when it cannot fence the primary, preventing split-brain. After promotion,
+`almalt` is active and `almalinxo` is standby. This is a manual failover; it
+does not replicate GitLab data, so restore a recent backup on the standby
+before promoting if it is not current.
+
+Run the script with no arguments to make the current detected host standby;
+it prompts before stopping GitLab and releasing the shared endpoint:
+
+```bash
+bash scripts/switch_gitlab_role.sh
+```

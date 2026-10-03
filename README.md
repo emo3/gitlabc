@@ -47,6 +47,7 @@ Run these commands from `gitlabc`:
 | Back up | `bash scripts/backup_gitlab.sh` |
 | List backups | `bash scripts/restore_gitlab.sh -l` |
 | Install daily safe Docker cleanup | `bash scripts/docker_cleanup_safe.sh` |
+| Promote standby (`almalt`) | `bash scripts/switch_gitlab_role.sh promote` |
 
 See [scripts/README.md](scripts/README.md) for all helpers.
 
