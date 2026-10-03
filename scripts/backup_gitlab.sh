@@ -15,6 +15,8 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 BACKUP_BUCKET="${BACKUP_BUCKET:-gitlab-backups}"
 BACKUP_DIR="${BACKUP_DIR:-${PROJECT_ROOT}/.backups}"
 BACKUP_UTILITY_ARGS="${BACKUP_UTILITY_ARGS:-}"
+KUBECTL_REQUEST_TIMEOUT="${KUBECTL_REQUEST_TIMEOUT:-15s}"
+S3CMD="PYTHONWARNINGS=ignore::SyntaxWarning s3cmd --no-mime-magic"
 
 function usage() {
   local exit_code="${1:-1}"
@@ -36,6 +38,7 @@ Environment:
   BACKUP_BUCKET       Object storage backup bucket (default: gitlab-backups)
   BACKUP_DIR          Host backup directory (default: .backups)
   BACKUP_UTILITY_ARGS Extra arguments passed to backup-utility
+  KUBECTL_REQUEST_TIMEOUT Kubernetes API request timeout (default: 15s)
 EOF
   exit "${exit_code}"
 }
@@ -65,7 +68,17 @@ function running_toolbox_pod() {
 }
 
 function rails_secret_name() {
-  kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secrets \
+  local expected_secret="${RELEASE_NAME}-rails-secret"
+
+  if kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" \
+    -n "${NAMESPACE}" get secret "${expected_secret}" >/dev/null 2>&1
+  then
+    echo "${expected_secret}"
+    return
+  fi
+
+  kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" \
+    -n "${NAMESPACE}" get secrets \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
     | awk '/rails-secret$/ { print; exit }'
 }
@@ -134,12 +147,12 @@ echo "Rails secrets copied to: ${RAILS_SECRET_FILE}"
 echo "Creating GitLab backup in s3://${BACKUP_BUCKET}/ ..."
 
 kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c toolbox -- \
-  sh -lc "backup-utility ${BACKUP_UTILITY_ARGS}"
+  sh -lc "trap 'rm -f /tmp/gitlab-backup-s3cmd.conf' EXIT; sed '/^[[:space:]]*mime_magic[[:space:]]*=/d' /etc/gitlab/.s3cfg > /tmp/gitlab-backup-s3cmd.conf; printf '\nmime_magic = False\n' >> /tmp/gitlab-backup-s3cmd.conf; PYTHONWARNINGS=ignore::SyntaxWarning backup-utility --s3config /tmp/gitlab-backup-s3cmd.conf ${BACKUP_UTILITY_ARGS}"
 
 echo "Finding newest backup archive..."
 BACKUP_OBJECT="$(
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c toolbox -- \
-    sh -lc "s3cmd ls 's3://${BACKUP_BUCKET}/' | awk '\$4 ~ /_gitlab_backup\\.tar$/ { print \$4 }' | sort | tail -n 1" \
+    sh -lc "${S3CMD} ls 's3://${BACKUP_BUCKET}/' | awk '\$4 ~ /_gitlab_backup\\.tar$/ { print \$4 }' | sort | tail -n 1" \
     2>/dev/null || true
 )"
 
@@ -155,7 +168,7 @@ LOCAL_BACKUP="${BACKUP_DIR}/${BACKUP_FILE}"
 
 echo "Downloading ${BACKUP_OBJECT} to toolbox temp path..."
 kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c toolbox -- \
-  sh -lc "rm -f '${REMOTE_TMP}' && s3cmd get '${BACKUP_OBJECT}' '${REMOTE_TMP}'"
+  sh -lc "rm -f '${REMOTE_TMP}' && ${S3CMD} get '${BACKUP_OBJECT}' '${REMOTE_TMP}'"
 
 echo "Copying backup to host: ${LOCAL_BACKUP}"
 kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" cp \

@@ -291,6 +291,7 @@ function deploy_external_garage() {
     "gitlab-agent-plan-content"
     "gitlab-artifacts"
     "gitlab-backups"
+    "gitlab-ci-catalog-bundles"
     "gitlab-ci-secure-files"
     "gitlab-dependency-proxy"
     "gitlab-mr-diffs"
@@ -351,6 +352,7 @@ secret_key = ${GARAGE_SECRET_KEY}
 host_base = $(garage_release_name).${NAMESPACE}.svc.cluster.local:3900
 host_bucket = $(garage_release_name).${NAMESPACE}.svc.cluster.local:3900
 use_https = False
+mime_magic = False
 EOF
 )" --dry-run=client -o yaml | kubectl apply -f -
 
