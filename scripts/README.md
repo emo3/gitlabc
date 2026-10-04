@@ -104,8 +104,10 @@ Both actions are idempotent. If the local host already has the requested role
 and its peer has the opposite role, the script makes no changes. Otherwise it
 automatically repairs the two-host state; it never prompts for confirmation.
 
-Run the script with `standby` (or no arguments) to make the current detected
-host standby. It immediately stops GitLab and releases the shared endpoint:
+Run the script with no arguments to reconcile the configured default roles:
+`almalinxo` is active and `almalt` is standby. Run it with `standby` to make
+the current detected host standby. It immediately stops GitLab and releases
+the shared endpoint:
 
 ```bash
 bash scripts/switch_gitlab_role.sh standby

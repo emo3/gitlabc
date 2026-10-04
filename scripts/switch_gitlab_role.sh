@@ -29,12 +29,13 @@ K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-gitlab-dev}"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/switch_gitlab_role.sh [standby]
-       bash scripts/switch_gitlab_role.sh promote
+Usage: bash scripts/switch_gitlab_role.sh [promote|standby]
 
-With no arguments (or `standby`), this host stops GitLab and releases the
-shared endpoint, making it standby. Run `promote` on either host to fence the
-other host, claim the endpoint locally, and start GitLab.
+With no arguments, reconcile the configured default roles: the primary host
+is active and the standby host is inactive. Run `promote` on either host to
+fence the other host, claim the endpoint locally, and start GitLab there.
+Run `standby` to explicitly stop GitLab and release the shared endpoint on
+this host.
 
 Defaults: primary almalinxo (192.168.86.80); standby almalt (192.168.86.141).
 Required: passwordless sudo for nmcli/ip on both hosts and key-based SSH in
@@ -186,8 +187,18 @@ promote() {
   echo "Promotion complete: $(hostname -s) is active; ${peer_host} is standby."
 }
 
-ACTION="${1:-standby}"
+ACTION="${1:-default}"
 case "${ACTION}" in
+  default)
+    persist_role_settings
+    # The configured primary is the default active host. Invoking the helper
+    # on the standby preserves that policy by ensuring its primary peer is up.
+    if [[ "$(local_host_role)" == primary ]]; then
+      promote
+    else
+      make_standby
+    fi
+    ;;
   promote) persist_role_settings; promote ;;
   standby) persist_role_settings; make_standby ;;
   -h|--help) usage ;;
