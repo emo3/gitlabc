@@ -24,6 +24,7 @@ the repository root, for example: `bash scripts/check_status.sh`.
 | `start_gitlab.sh` | Reconcile prerequisites, deploy GitLab, and wait for it to become healthy. |
 | `stop_gitlab.sh` | Stop the k3d cluster while retaining GitLab data. |
 | `switch_gitlab_role.sh` | Safely promote `almalt` after fencing `almalinxo` and handing off the shared LAN endpoint. |
+| `sync_backups.sh` | Pull `.backups/` from the primary (`.80`) or standby (`.141`) GitLab host. |
 
 ## Notes
 
@@ -48,6 +49,10 @@ bash scripts/backup_gitlab.sh
 # List or restore backups; restoring overwrites current GitLab data
 bash scripts/restore_gitlab.sh -l
 bash scripts/restore_gitlab.sh
+
+# Pull backup files from the primary or standby host (does not delete local files)
+bash scripts/sync_backups.sh .80
+bash scripts/sync_backups.sh .141
 
 # Run safe Docker cleanup now (never removes containers, volumes, or networks)
 DOCKER_CLEANUP_RUN=true bash scripts/docker_cleanup_safe.sh
