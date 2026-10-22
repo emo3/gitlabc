@@ -116,9 +116,16 @@ function running_toolbox_pod() {
 }
 
 function rails_secret_name() {
+  local expected_secret="${RELEASE_NAME}-rails-secret"
+
+  if kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secret "${expected_secret}" >/dev/null 2>&1; then
+    echo "${expected_secret}"
+    return
+  fi
+
   kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get secrets \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-    | awk '/rails-secret$/ { print; exit }'
+    | awk '/rails-secret$/ { candidate = $0 } END { if (candidate != "") print candidate }'
 }
 
 function scale_gitlab() {
