@@ -33,6 +33,11 @@ the repository root, for example: `bash scripts/check_status.sh`.
   relevant idempotent Ansible/deploy workflows. Its Ansible step does not create
   or start k3d; use `start_gitlab.sh` when cluster lifecycle management is wanted.
   Use `-s` without `-a` for an audit that requires manual review before changes.
+  GitLab chart selection requires a dated, non-draft official release
+  announcement. Runner selection requires a published GitLab Runner Release
+  entry. A newer chart alone is insufficient, and unavailable announcement
+  metadata stops the check. Automatic application downgrades are refused,
+  including when the deployed version is newer than its configured pin.
 - `check_status.sh`, `start_gitlab.sh`, `stop_gitlab.sh`, and the reset,
   deploy, certificate, and configuration helpers take their settings from
   environment variables rather than command-line arguments.

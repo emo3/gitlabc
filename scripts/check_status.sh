@@ -15,6 +15,12 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 
 KUBECTL=(kubectl --context "${KUBE_CONTEXT}" --request-timeout="${KUBECTL_REQUEST_TIMEOUT}" -n "${NAMESPACE}")
 
+# CI job pods share this namespace, but their lifecycle does not determine
+# whether GitLab is healthy. Keep the runner manager and dependency pods.
+function workload_pods() {
+  "${KUBECTL[@]}" get pods -l '!job.runner.gitlab.com/pod' "$@"
+}
+
 function require_positive_integer() {
   local name="$1"
   local value="$2"
@@ -48,7 +54,7 @@ function pods_ready() {
   local pods
   local not_ready
 
-  pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null)"
+  pods="$(workload_pods --no-headers 2>/dev/null)"
   [[ -n "${pods}" ]] || return 1
 
   not_ready="$(awk '
@@ -91,7 +97,7 @@ function print_wait_reasons() {
   local not_ready_pods
   local not_ready_jobs
 
-  pods="$("${KUBECTL[@]}" get pods --no-headers 2>/dev/null)"
+  pods="$(workload_pods --no-headers 2>/dev/null)"
   if [[ -z "${pods}" ]]; then
     echo "  no pods found yet"
     not_ready_pods=""
@@ -159,7 +165,7 @@ function print_issues() {
 
   echo ""
   echo "== Non-ready pods =="
-  "${KUBECTL[@]}" get pods --no-headers 2>/dev/null | awk '
+  workload_pods --no-headers 2>/dev/null | awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {
@@ -198,7 +204,7 @@ function print_issues() {
     echo ""
     echo "--- ${pod} ---"
     "${KUBECTL[@]}" describe pod "${pod}" || true
-  done < <("${KUBECTL[@]}" get pods --no-headers 2>/dev/null | awk '
+  done < <(workload_pods --no-headers 2>/dev/null | awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {
@@ -215,7 +221,7 @@ function print_issues() {
     echo ""
     echo "--- ${pod} ---"
     "${KUBECTL[@]}" logs "${pod}" --all-containers --tail=80 || true
-  done < <("${KUBECTL[@]}" get pods --no-headers 2>/dev/null | awk '
+  done < <(workload_pods --no-headers 2>/dev/null | awk '
     $3 == "Completed" { next }
     $3 == "Succeeded" { next }
     {

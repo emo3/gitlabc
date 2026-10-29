@@ -23,6 +23,9 @@ function usage() {
 Usage: bash scripts/check_latest_stable.sh [-a] [-s] [-H] [-r]
 
 Checks local version pins against current stable upstream releases.
+GitLab must have a published release announcement; Runner must have a released
+GitLab Release entry. Chart publication alone does not approve an application.
+Application downgrades are refused and require a separate recovery procedure.
 
 Options:
   -a  Update drifting pins, rerun Ansible for tool pins without managing k3d, and redeploy changed charts.
@@ -144,6 +147,37 @@ function chart_app_version() {
     | awk -v chart_version="${chart_version}" 'NR > 1 && $2 == chart_version { print $3; exit }'
 }
 
+function announced_chart() {
+  helm search repo "gitlab/$1" --versions -o json |
+    python3 "${SCRIPT_DIR}/announced_chart.py" "$1"
+}
+
+function refuse_chart_downgrade() {
+  local chart="$1" current="$2" target="$3" release="$4"
+  local current_app target_app installed_app
+  current_app="$(chart_app_version "${chart}" "${current}")"
+  target_app="$(chart_app_version "${chart}" "${target}")"
+  installed_app="$(helm list --all --filter "^${release}$" \
+    --namespace "${NAMESPACE:-gitlab}" \
+    --kube-context "${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME:-gitlab-dev}}" -o json |
+    python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["app_version"] if rows else "")')"
+  python3 - "${chart}" "${current_app}" "${target_app}" "${installed_app}" <<'PY'
+import re
+import sys
+
+def version(value):
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value)
+    if not match:
+        sys.exit("ERROR: Cannot verify application version; refusing chart changes.")
+    return tuple(map(int, match.groups()))
+
+for current in [sys.argv[2], sys.argv[4]]:
+    if current and version(current) > version(sys.argv[3]):
+        sys.exit(f"ERROR: {sys.argv[1]} {current} is newer than the announced target "
+                 f"{sys.argv[3]}. Automatic downgrade refused; review database recovery first.")
+PY
+}
+
 function strip_v() {
   sed -E 's/^\s*v?//'
 }
@@ -240,6 +274,7 @@ function update_env_file_var() {
 
 require_command curl
 require_command helm
+require_command python3
 
 if [[ ! -f "${ANSIBLE_PLAYBOOK}" ]]; then
   echo "ERROR: Ansible playbook not found at ${ANSIBLE_PLAYBOOK}."
@@ -297,10 +332,10 @@ GLAB_LATEST="$(gitlab_latest_tag)"
 K3D_LATEST="$(github_latest_tag k3d-io/k3d)"
 K3S_LATEST="$(github_latest_tag k3s-io/k3s)"
 MKCERT_LATEST="$(github_latest_tag FiloSottile/mkcert)"
-GITLAB_CHART_LATEST="$(latest_chart gitlab/gitlab)"
-GITLAB_APP_LATEST="$(latest_chart_app gitlab/gitlab)"
-RUNNER_CHART_LATEST="$(latest_chart gitlab/gitlab-runner)"
-RUNNER_APP_LATEST="$(latest_chart_app gitlab/gitlab-runner)"
+GITLAB_ANNOUNCED="$(announced_chart gitlab)"
+read -r GITLAB_CHART_LATEST GITLAB_APP_LATEST <<< "${GITLAB_ANNOUNCED}"
+RUNNER_ANNOUNCED="$(announced_chart gitlab-runner)"
+read -r RUNNER_CHART_LATEST RUNNER_APP_LATEST <<< "${RUNNER_ANNOUNCED}"
 VALKEY_CHART_LATEST="$(latest_chart valkey/valkey)"
 VALKEY_APP_LATEST="$(latest_chart_app valkey/valkey)"
 CNPG_CHART_LATEST="$(latest_chart cnpg/cloudnative-pg)"
@@ -343,6 +378,11 @@ add_result k3d "$(installed_k3d_version)" "v${K3D_CURRENT}" "stale k3d creates s
 add_result mkcert "$(installed_mkcert_version)" "${MKCERT_CURRENT}" "" false
 
 if [[ "${APPLY}" == "true" ]]; then
+  # Check before changing any pins or running any deployment.
+  refuse_chart_downgrade gitlab/gitlab "${GITLAB_CHART_CURRENT}" "${GITLAB_CHART_LATEST}" "${GITLAB_RELEASE_NAME:-gitlab}"
+  if [[ -n "${RUNNER_CHART_CURRENT}" ]]; then
+    refuse_chart_downgrade gitlab/gitlab-runner "${RUNNER_CHART_CURRENT}" "${RUNNER_CHART_LATEST}" "${RUNNER_RELEASE_NAME:-gitlab-runner}"
+  fi
   TOOLS_CHANGED=false
   GITLAB_CHART_CHANGED=false
   RUNNER_CHART_CHANGED=false
