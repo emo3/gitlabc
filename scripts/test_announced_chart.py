@@ -72,7 +72,11 @@ class DowngradeGuardTests(unittest.TestCase):
         definitions = script.split("\nrequire_command curl\n", 1)[0]
         command = definitions + '''
 chart_app_version() { if [[ "$2" == current ]]; then printf '%s' "$PINNED"; else printf '%s' "$TARGET"; fi; }
-helm() { printf '%s' "$HELM_ROWS"; }
+helm() {
+    [[ " $* " != *" --all "* ]] || return 2
+    [[ " $* " == *" --deployed "* && " $* " == *" --failed "* && " $* " == *" --pending "* && " $* " == *" --uninstalled "* && " $* " == *" --uninstalling "* && " $* " == *" --superseded "* ]] || return 2
+    printf '%s' "$HELM_ROWS"
+}
 refuse_chart_downgrade gitlab/gitlab current target gitlab
 '''
         import os

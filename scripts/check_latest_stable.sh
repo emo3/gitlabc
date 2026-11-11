@@ -154,13 +154,14 @@ function announced_chart() {
 
 function refuse_chart_downgrade() {
   local chart="$1" current="$2" target="$3" release="$4"
-  local current_app target_app installed_app
+  local current_app target_app installed_app installed_releases
   current_app="$(chart_app_version "${chart}" "${current}")"
   target_app="$(chart_app_version "${chart}" "${target}")"
-  installed_app="$(helm list --all --filter "^${release}$" \
+  # Explicit status filters work in both Helm 3 and Helm 4, which removed --all.
+  installed_releases="$(helm list --deployed --failed --pending --uninstalled --uninstalling --superseded --filter "^${release}$" \
     --namespace "${NAMESPACE:-gitlab}" \
-    --kube-context "${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME:-gitlab-dev}}" -o json |
-    python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["app_version"] if rows else "")')"
+    --kube-context "${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME:-gitlab-dev}}" -o json)"
+  installed_app="$(python3 -c 'import json,sys; rows=json.load(sys.stdin); print(rows[0]["app_version"] if rows else "")' <<< "${installed_releases}")"
   python3 - "${chart}" "${current_app}" "${target_app}" "${installed_app}" <<'PY'
 import re
 import sys
