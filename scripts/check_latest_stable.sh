@@ -10,8 +10,15 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-${PROJECT_ROOT}/ansible-install-k8s-tools-gitlab-deps.yml}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-${PROJECT_ROOT}/scripts/deploy_gitlab.sh}"
 RUNNER_DEPLOY_SCRIPT="${RUNNER_DEPLOY_SCRIPT:-${PROJECT_ROOT}/../gitlabr/scripts/deploy_runner.sh}"
-GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE:-${PROJECT_ROOT}/.gitlab-versions.env}"
-RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE:-${PROJECT_ROOT}/../gitlabr/.runner-versions.env}"
+TOOL_VERSIONS_FILE="${TOOL_VERSIONS_FILE:-${PROJECT_ROOT}/.tool-versions.local.yml}"
+GITLAB_VERSIONS_DEFAULT="${PROJECT_ROOT}/.gitlab-versions.env"
+GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE:-${PROJECT_ROOT}/.gitlab-versions.local.env}"
+RUNNER_VERSIONS_DEFAULT="${PROJECT_ROOT}/../gitlabr/.runner-versions.env"
+RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE:-${PROJECT_ROOT}/../gitlabr/.runner-versions.local.env}"
+GITLAB_READ_FILE="${GITLAB_VERSIONS_FILE}"
+RUNNER_READ_FILE="${RUNNER_VERSIONS_FILE}"
+[[ -f "${GITLAB_READ_FILE}" ]] || GITLAB_READ_FILE="${GITLAB_VERSIONS_DEFAULT}"
+[[ -f "${RUNNER_READ_FILE}" ]] || RUNNER_READ_FILE="${RUNNER_VERSIONS_DEFAULT}"
 
 STRICT=false
 RUN_HEALTH=false
@@ -92,7 +99,9 @@ function require_command() {
 function yaml_var() {
   local name="$1"
 
-  sed -nE "s/^[[:space:]]+${name}: \"([^\"]+)\"$/\1/p" "${ANSIBLE_PLAYBOOK}" | head -1
+  local file="${ANSIBLE_PLAYBOOK}"
+  [[ ! -f "${TOOL_VERSIONS_FILE}" ]] || file="${TOOL_VERSIONS_FILE}"
+  sed -nE "s/^[[:space:]]*${name}: \"([^\"]*)\"$/\1/p" "${file}" | head -1
 }
 
 function env_file_var() {
@@ -287,8 +296,8 @@ if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${GITLAB_VERSIONS_FILE}" ]]; then
-  echo "ERROR: GitLab versions file not found at ${GITLAB_VERSIONS_FILE}."
+if [[ ! -f "${GITLAB_READ_FILE}" ]]; then
+  echo "ERROR: GitLab versions file not found at ${GITLAB_READ_FILE}."
   exit 1
 fi
 
@@ -315,14 +324,14 @@ else
   K3S_CURRENT="${K3S_DEFAULT:-k3d default}"
 fi
 MKCERT_CURRENT="$(yaml_var mkcert_version)"
-GITLAB_CHART_CURRENT="$(env_file_var GITLAB_CHART_VERSION "${GITLAB_VERSIONS_FILE}")"
+GITLAB_CHART_CURRENT="$(env_file_var GITLAB_CHART_VERSION "${GITLAB_READ_FILE}")"
 RUNNER_CHART_CURRENT=""
 if [[ -f "${RUNNER_DEPLOY_SCRIPT}" ]]; then
-  if [[ ! -f "${RUNNER_VERSIONS_FILE}" ]]; then
-    echo "ERROR: Runner versions file not found at ${RUNNER_VERSIONS_FILE}."
+  if [[ ! -f "${RUNNER_READ_FILE}" ]]; then
+    echo "ERROR: Runner versions file not found at ${RUNNER_READ_FILE}."
     exit 1
   fi
-  RUNNER_CHART_CURRENT="$(env_file_var RUNNER_CHART_VERSION "${RUNNER_VERSIONS_FILE}")"
+  RUNNER_CHART_CURRENT="$(env_file_var RUNNER_CHART_VERSION "${RUNNER_READ_FILE}")"
 fi
 GARAGE_CURRENT="$(sed -nE 's/^GARAGE_APP_VERSION="\$\{GARAGE_APP_VERSION:-([^}]+)\}"$/\1/p' "${PROJECT_ROOT}/scripts/dev_dependencies.sh" | head -1)"
 POSTGRES_CURRENT="$(sed -nE 's/^CNPG_POSTGRESQL_TAG="\$\{CNPG_POSTGRESQL_TAG:-([^}]+)\}"$/\1/p' "${PROJECT_ROOT}/scripts/dev_dependencies.sh" | head -1)"
@@ -384,32 +393,43 @@ if [[ "${APPLY}" == "true" ]]; then
   if [[ -n "${RUNNER_CHART_CURRENT}" ]]; then
     refuse_chart_downgrade gitlab/gitlab-runner "${RUNNER_CHART_CURRENT}" "${RUNNER_CHART_LATEST}" "${RUNNER_RELEASE_NAME:-gitlab-runner}"
   fi
+  # Seed local pins only when applying; the tracked defaults remain unchanged.
+  if [[ ! -f "${TOOL_VERSIONS_FILE}" ]]; then
+    for name in kubectl_version helm_version glab_version k3d_version k3s_image mkcert_version; do
+      printf '%s: "%s"\n' "${name}" "$(yaml_var "${name}")"
+    done > "${TOOL_VERSIONS_FILE}.tmp"
+    mv "${TOOL_VERSIONS_FILE}.tmp" "${TOOL_VERSIONS_FILE}"
+  fi
+  [[ -f "${GITLAB_VERSIONS_FILE}" ]] || cp "${GITLAB_READ_FILE}" "${GITLAB_VERSIONS_FILE}"
+  if [[ -n "${RUNNER_CHART_CURRENT}" && ! -f "${RUNNER_VERSIONS_FILE}" ]]; then
+    cp "${RUNNER_READ_FILE}" "${RUNNER_VERSIONS_FILE}"
+  fi
   TOOLS_CHANGED=false
   GITLAB_CHART_CHANGED=false
   RUNNER_CHART_CHANGED=false
 
   if versions_differ "${KUBECTL_CURRENT}" "${KUBECTL_LATEST}"; then
-    update_yaml_var kubectl_version "${KUBECTL_LATEST}" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var kubectl_version "${KUBECTL_LATEST}" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if versions_differ "${HELM_CURRENT}" "${HELM_LATEST}"; then
-    update_yaml_var helm_version "${HELM_LATEST}" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var helm_version "${HELM_LATEST}" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if versions_differ "${GLAB_CURRENT}" "${GLAB_LATEST}"; then
-    update_yaml_var glab_version "$(strip_v <<< "${GLAB_LATEST}")" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var glab_version "$(strip_v <<< "${GLAB_LATEST}")" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if versions_differ "${K3D_CURRENT}" "${K3D_LATEST}"; then
-    update_yaml_var k3d_version "$(strip_v <<< "${K3D_LATEST}")" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var k3d_version "$(strip_v <<< "${K3D_LATEST}")" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if versions_differ "${MKCERT_CURRENT}" "${MKCERT_LATEST}"; then
-    update_yaml_var mkcert_version "$(strip_v <<< "${MKCERT_LATEST}")" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var mkcert_version "$(strip_v <<< "${MKCERT_LATEST}")" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if [[ -n "${K3S_IMAGE_CURRENT}" ]] && versions_differ "${K3S_CURRENT}" "${K3S_LATEST}"; then
-    update_yaml_var k3s_image "rancher/k3s:${K3S_LATEST/-k3s/+k3s}" "${ANSIBLE_PLAYBOOK}"
+    update_yaml_var k3s_image "rancher/k3s:${K3S_LATEST/-k3s/+k3s}" "${TOOL_VERSIONS_FILE}"
     TOOLS_CHANGED=true
   fi
   if versions_differ "${GITLAB_CHART_CURRENT}" "${GITLAB_CHART_LATEST}"; then
@@ -422,7 +442,7 @@ if [[ "${APPLY}" == "true" ]]; then
   fi
 
   # Reconcile tool installation even when an earlier failed run already updated
-  # the tracked pin. This makes -a safe to retry after a partial failure.
+  # the local pin. This makes -a safe to retry after a partial failure.
   if versions_differ "$(installed_kubectl_version)" "${KUBECTL_LATEST}" \
     || versions_differ "$(installed_helm_version)" "${HELM_LATEST}" \
     || versions_differ "$(installed_glab_version)" "${GLAB_LATEST}" \
@@ -436,15 +456,16 @@ if [[ "${APPLY}" == "true" ]]; then
     echo "Applying updated tool pins with Ansible..."
     ansible-playbook -i localhost, --connection=local \
       -e create_k3d_cluster=false \
+      -e "@${TOOL_VERSIONS_FILE}" \
       "${ANSIBLE_PLAYBOOK}"
   fi
   if [[ "${GITLAB_CHART_CHANGED}" == "true" ]]; then
     echo "Redeploying GitLab with its updated chart pin..."
-    bash "${DEPLOY_SCRIPT}"
+    GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE}" bash "${DEPLOY_SCRIPT}"
   fi
   if [[ "${RUNNER_CHART_CHANGED}" == "true" ]]; then
     echo "Redeploying Runner with its updated chart pin..."
-    bash "${RUNNER_DEPLOY_SCRIPT}"
+    RUNNER_VERSIONS_FILE="${RUNNER_VERSIONS_FILE}" bash "${RUNNER_DEPLOY_SCRIPT}"
   fi
   if [[ "${TOOLS_CHANGED}" == "false" && "${GITLAB_CHART_CHANGED}" == "false" && "${RUNNER_CHART_CHANGED}" == "false" ]]; then
     echo "No supported pins needed updating."
@@ -464,6 +485,6 @@ if [[ "${STRICT}" == "true" && "${APPLY}" != "true" && "${DRIFT_COUNT}" -ne 0 ]]
   printf '  - %s\n' "${DRIFTED_COMPONENTS[@]}"
   echo ""
   echo "Next: review each release's compatibility notes, update its pin, then rerun its deploy script."
-  echo "For GitLab and Runner charts, update the pin in .gitlab-versions.env or .runner-versions.env."
+  echo "For GitLab and Runner charts, update the local version pins."
   exit 2
 fi

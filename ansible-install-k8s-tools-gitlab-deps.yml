@@ -26,6 +26,12 @@
     k3d_subnet: "172.28.0.0/16"
     k3d_host_gateway_ip: "172.28.0.1"
 
+  pre_tasks:
+    - name: Load local tool version pins when present
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/.tool-versions.local.yml"
+      when: lookup('ansible.builtin.fileglob', playbook_dir ~ '/.tool-versions.local.yml') | length > 0
+
   handlers:
     - name: Restart Docker
       ansible.builtin.service:

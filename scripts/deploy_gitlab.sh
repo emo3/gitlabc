@@ -15,7 +15,10 @@ GITLAB_CHART_VERSION_WAS_SET=false
 if [[ -v GITLAB_CHART_VERSION ]]; then
   GITLAB_CHART_VERSION_WAS_SET=true
 fi
-GITLAB_VERSIONS_FILE="${GITLAB_VERSIONS_FILE:-${PROJECT_ROOT}/.gitlab-versions.env}"
+if [[ -z "${GITLAB_VERSIONS_FILE:-}" ]]; then
+  GITLAB_VERSIONS_FILE="${PROJECT_ROOT}/.gitlab-versions.env"
+  [[ ! -f "${PROJECT_ROOT}/.gitlab-versions.local.env" ]] || GITLAB_VERSIONS_FILE="${PROJECT_ROOT}/.gitlab-versions.local.env"
+fi
 if [[ ! -f "${GITLAB_VERSIONS_FILE}" ]]; then
   echo "ERROR: GitLab versions file not found at ${GITLAB_VERSIONS_FILE}."
   exit 1

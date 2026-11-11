@@ -33,6 +33,12 @@ the repository root, for example: `bash scripts/check_status.sh`.
   relevant idempotent Ansible/deploy workflows. Its Ansible step does not create
   or start k3d; use `start_gitlab.sh` when cluster lifecycle management is wanted.
   Use `-s` without `-a` for an audit that requires manual review before changes.
+  On the first apply, it copies the tracked defaults into ignored local files:
+  `.tool-versions.local.yml`, `.gitlab-versions.local.env`, and the sibling
+  `gitlabr/.runner-versions.local.env`. Subsequent checks, direct playbook runs,
+  and deployments use these local pins. A fresh checkout uses the tracked
+  defaults until its first apply; back up or copy the local files if the exact
+  pins need to be retained or shared. Version-only updates need no Git commit.
   GitLab chart selection requires a dated, non-draft official release
   announcement. Runner selection requires a published GitLab Runner Release
   entry. A newer chart alone is insufficient, and unavailable announcement
