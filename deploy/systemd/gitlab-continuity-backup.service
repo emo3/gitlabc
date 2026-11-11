@@ -1,0 +1,8 @@
+[Unit]
+Description=GitLab daily backup and peer replication
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/gitlabc
+ExecStart=/usr/bin/bash %h/code/gitlabc/scripts/continuity_backup.sh
+TimeoutStartSec=6h

@@ -179,6 +179,7 @@ kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c t
 
 echo "Copying backup to host: ${LOCAL_BACKUP}"
 kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" cp \
+  --retries=5 \
   -c toolbox \
   "${TOOLBOX_POD}:${REMOTE_TMP}" \
   "${LOCAL_BACKUP}"

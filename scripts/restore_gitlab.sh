@@ -269,6 +269,16 @@ echo "Rails secret:   ${RAILS_SECRET}"
 echo "Toolbox pod:    ${TOOLBOX_POD}"
 echo ""
 
+if [[ ! -t 0 ]]; then
+  echo "ERROR: Restore requires an interactive review and confirmation." >&2
+  exit 1
+fi
+read -r -p "Type RESTORE to overwrite this GitLab instance: " confirmation
+if [[ "${confirmation}" != RESTORE ]]; then
+  echo "Restore cancelled."
+  exit 1
+fi
+
 trap cleanup EXIT
 
 echo "Restoring Rails secrets..."

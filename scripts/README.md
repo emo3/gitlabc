@@ -132,3 +132,31 @@ the shared endpoint:
 ```bash
 bash scripts/switch_gitlab_role.sh standby
 ```
+
+## Scheduled continuity backups
+
+The `gitlab-continuity-backup.timer` user timer runs daily at 02:00 local
+time on both machines, with up to five minutes of jitter. Only the host
+holding 192.168.86.50 creates a backup. User lingering keeps the timer active
+after logout; a powered-off machine cannot run a timer. Backups are saved in
+`/mnt/O3T/code/gitlabc/.backups/continuity` on alo and
+`/mnt/spare/code/gitlabc/.backups/continuity` on almalt. Each set contains an
+archive, its Rails secrets, and SHA256SUMS. The peer copy is verified; failed
+replication leaves the local set and is retried on the next backup run.
+
+Inspect timer and the last service result with:
+
+```bash
+systemctl --user list-timers gitlab-continuity-backup.timer
+systemctl --user status gitlab-continuity-backup.service
+journalctl --user -u gitlab-continuity-backup.service --since '2 days ago'
+```
+
+This is a daily recovery-point target, not a guarantee: a failed backup or
+an offline peer increases the potential loss. There is no configured remote
+alerting or automatic retention yet; monitor failures and free disk space.
+Copies on the NTFS mounts are readable to other local users. A checksum verifies
+copy integrity, not restoreability; test restores and resolve the registry
+metadata database and OpenBao warnings before relying on the backups as complete.
+The two disks are at the same site, and almalt's spare partition shares its
+system disk. An unreachable peer is not proof of fencing.
