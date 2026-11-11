@@ -74,6 +74,10 @@ REGISTRY_METADATA_MIGRATION_CONFIRM=true \
 ```
 
 Keep the backup archive and Rails secrets together; both are needed to restore.
+After a successful host copy, the backup script keeps the three most recent
+matching archives in object storage and on the host. Set `BACKUP_KEEP_COUNT`
+to a positive integer to change this limit. Cleanup runs only when a backup is
+created, and does not remove archives copied to another host by `sync_backups.sh`.
 Use `TIMEOUT_SECONDS=<seconds>` to extend `check_status.sh` beyond its
 720-second default.
 

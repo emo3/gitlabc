@@ -15,6 +15,7 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-${K3D_CLUSTER_NAME}}"
 BACKUP_BUCKET="${BACKUP_BUCKET:-gitlab-backups}"
 BACKUP_DIR="${BACKUP_DIR:-${PROJECT_ROOT}/.backups}"
 BACKUP_UTILITY_ARGS="${BACKUP_UTILITY_ARGS:-}"
+BACKUP_KEEP_COUNT="${BACKUP_KEEP_COUNT:-3}"
 KUBECTL_REQUEST_TIMEOUT="${KUBECTL_REQUEST_TIMEOUT:-15s}"
 S3CMD="PYTHONWARNINGS=ignore::SyntaxWarning s3cmd --no-mime-magic"
 
@@ -38,6 +39,7 @@ Environment:
   BACKUP_BUCKET       Object storage backup bucket (default: gitlab-backups)
   BACKUP_DIR          Host backup directory (default: .backups)
   BACKUP_UTILITY_ARGS Extra arguments passed to backup-utility
+  BACKUP_KEEP_COUNT   Number of recent archives to retain (default: 3)
   KUBECTL_REQUEST_TIMEOUT Kubernetes API request timeout (default: 15s)
 EOF
   exit "${exit_code}"
@@ -113,6 +115,11 @@ if [[ -z "${BACKUP_DIR}" ]]; then
   usage
 fi
 
+if [[ ! "${BACKUP_KEEP_COUNT}" =~ ^[1-9][0-9]*$ ]] || (( ${#BACKUP_KEEP_COUNT} > 6 )); then
+  echo "ERROR: BACKUP_KEEP_COUNT must be a positive integer (at most six digits)."
+  exit 1
+fi
+
 require_command kubectl
 
 if ! kubectl config get-contexts "${KUBE_CONTEXT}" > /dev/null 2>&1; then
@@ -180,3 +187,24 @@ kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c t
   rm -f "${REMOTE_TMP}"
 
 echo "Backup copied to: ${LOCAL_BACKUP}"
+
+echo "Keeping the ${BACKUP_KEEP_COUNT} most recent archives in object storage..."
+kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" exec "${TOOLBOX_POD}" -c toolbox -- \
+  sh -lc "trap 'rm -f /tmp/gitlab-backup-s3cmd.conf' EXIT; sed '/^[[:space:]]*mime_magic[[:space:]]*=/d' /etc/gitlab/.s3cfg > /tmp/gitlab-backup-s3cmd.conf; printf '\\nmime_magic = False\\n' >> /tmp/gitlab-backup-s3cmd.conf; BACKUP_BUCKET_NAME='${BACKUP_BUCKET}' PYTHONWARNINGS=ignore::SyntaxWarning backup-utility --s3config /tmp/gitlab-backup-s3cmd.conf --cleanup --maximum-backups ${BACKUP_KEEP_COUNT}"
+
+echo "Keeping the ${BACKUP_KEEP_COUNT} most recent host archives..."
+mapfile -t LOCAL_ARCHIVES < <(find "${BACKUP_DIR}" -maxdepth 1 -type f \
+  -regextype posix-extended \
+  -regex '.*/[0-9]{10}_[0-9]{4}_[0-9]{2}_[0-9]{2}_.+_gitlab_backup\.tar' \
+  -printf '%f\n' | LC_ALL=C sort -r)
+kept=0
+for archive in "${LOCAL_ARCHIVES[@]}"; do
+  if [[ "${BACKUP_DIR}/${archive}" == "${LOCAL_BACKUP}" ]]; then
+    continue
+  fi
+  kept=$((kept + 1))
+  if (( kept >= BACKUP_KEEP_COUNT )); then
+    echo "Removing old host archive: ${BACKUP_DIR}/${archive}"
+    rm -- "${BACKUP_DIR}/${archive}"
+  fi
+done
